@@ -29,7 +29,7 @@ import sys
 import termios
 import threading
 import tty
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +53,7 @@ from rebalance.ingest.config import (  # noqa: E402
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID  # noqa: E402
 from rebalance.ingest.calendar_helpers import upcoming_calendar_rows  # noqa: E402
 from rebalance.ingest.db import db_connection  # noqa: E402
-from rebalance.tz_utils import local_tz, parse_utc_iso  # noqa: E402
+from rebalance.lib.time_ops import local_tz, parse_utc_iso  # noqa: E402
 from rebalance.ingest.index_ops import (  # noqa: E402
     get_index_status,
     get_watched_repos,
@@ -383,6 +383,15 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
                     FROM github_commits
                     WHERE committed_at IS NOT NULL
                     UNION ALL
+                    SELECT 'direct_commit', '', d.repo_full_name, 0, d.message,
+                           d.committed_at, d.author_login, d.html_url
+                    FROM github_direct_commits d
+                    WHERE d.committed_at IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM github_commits p
+                          WHERE p.repo_full_name = d.repo_full_name AND p.sha = d.sha
+                      )
+                    UNION ALL
                     SELECT 'comment', comment_type, repo_full_name, item_number,
                            body, created_at, author_login, html_url
                     FROM github_comments
@@ -427,6 +436,51 @@ def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str,
         return [dict(r) for r in rows]
     except Exception:  # noqa: BLE001 — empty DB before first sync
         return []
+
+
+def fetch_recent_auto_promotion(days: int = 7) -> dict[str, Any] | None:
+    """GH-124: most recent commit-threshold auto-promotion within the window, if any.
+
+    Read-only over ``project_registry`` — the repo-pie's "New repo added" top-item
+    annotation is this function's only consumer. Returns None when nothing promoted
+    in the window (the common case), or a dict with ``repo``/``project_name``/
+    ``promoted_at`` for the single most recent promotion.
+    """
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT name, custom_fields_json FROM project_registry "
+                "WHERE custom_fields_json IS NOT NULL"
+            ).fetchall()
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return None
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    best: tuple[datetime, dict[str, Any]] | None = None
+    for row in rows:
+        try:
+            custom_fields = json.loads(row["custom_fields_json"])
+        except (TypeError, ValueError):
+            continue
+        inference = (custom_fields or {}).get("inference") or {}
+        if inference.get("generated_by") != "commit_threshold_v1":
+            continue
+        promoted_at = inference.get("promoted_at")
+        if not promoted_at:
+            continue
+        try:
+            promoted_dt = datetime.fromisoformat(promoted_at)
+        except ValueError:
+            continue
+        if promoted_dt < cutoff:
+            continue
+        if best is None or promoted_dt > best[0]:
+            best = (promoted_dt, {
+                "repo": inference.get("repo_full_name"),
+                "project_name": row["name"],
+                "promoted_at": promoted_at,
+            })
+    return best[1] if best else None
 
 
 def fetch_org_activity(days: int = 14, limit: int = 100) -> dict[str, list[dict[str, Any]]]:
@@ -499,6 +553,50 @@ def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
     except Exception:  # noqa: BLE001 — empty DB before first sync
         return []
+
+
+def fetch_calendar_today(now: datetime, tz: Any, limit: int = 40) -> list[dict[str, Any]]:
+    """Today's events from local midnight — INCLUDING ones that already ended.
+
+    Sibling of :func:`fetch_calendar_upcoming`, which filters ``start_time >= now``
+    and therefore cannot serve the dashboard's day-grid view: by mid-afternoon it
+    returns nothing for the morning, leaving the top half of the grid permanently
+    blank and the "past event" styling unreachable.
+
+    Reads the same local ``calendar_events`` table with the same operator scope and
+    the same ignored-summary filter — no Google API call, no schema change, and the
+    upcoming path is left exactly as it was.
+    """
+    ignored = get_calendar_ignored_summaries()
+    local_midnight = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT summary, start_time, end_time, location
+                FROM calendar_events
+                WHERE calendar_id = ?
+                  AND julianday(start_time) >= julianday(?)
+                ORDER BY julianday(start_time) ASC
+                LIMIT ?
+                """,
+                (OPERATOR_CALENDAR_ID, local_midnight.isoformat(), limit),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out = []
+    for r in rows:
+        row = dict(r)
+        # Ignore patterns are case-insensitive SUBSTRING matches (see
+        # get_calendar_ignored_summaries), not equality — match that contract.
+        summary = (row.get("summary") or "").casefold()
+        if any(pat.casefold() in summary for pat in ignored):
+            continue
+        start = _parse_iso(row.get("start_time"))
+        if start is None or start.astimezone(tz).date() != local_midnight.date():
+            continue
+        out.append(row)
+    return out
 
 
 def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any]]:

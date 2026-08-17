@@ -1,10 +1,946 @@
 # Changelog
 
+> **`#nnn` and `GH-nnn` refer to this project's internal issue tracker.** They are retained as
+> historical labels, not links — in the public repository they do not resolve to anything, and that
+> is expected. Entries are written to stand on their own without them.
+
 > **Maintainers — there is no `[Unreleased]` section in this project.** Every fix
 > or feature takes a version bump at commit/merge time (semver: MAJOR = breaking ·
 > MINOR = feature · PATCH = fix) under a `## [x.y.z] - YYYY-MM-DD` heading. Do
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
+
+## [0.69.3] - 2026-08-17
+
+### Security
+- **Bumped the vulnerable YAML parser in an editor extension's development
+  lockfile to the patched release**, closing the remaining high-severity
+  dependency alert (development-scope only; the other extension lockfile was
+  already patched).
+
+## [0.69.2] - 2026-08-15
+
+### Changed
+- **Google OAuth is now bring-your-own-client.** rebalance no longer ships a Google OAuth
+  Desktop client. You create one in your own Google Cloud project and point rebalance at it via
+  `GOOGLE_OAUTH_CLIENT_FILE` or `~/secrets/google_oauth_client.json`; a template with the expected
+  shape and the five Cloud Console steps ships as `google_oauth_client.example.json`. Your
+  organization now owns the consent screen, scopes, quota, audit trail and revocation.
+  This also removes a hard blocker for public use: a bundled client's consent-screen *audience*
+  decides who may authenticate at all, and an "Internal" audience silently locks out everyone
+  outside the publisher's Workspace domain. A missing file now raises an error naming every path
+  tried, and choosing a "Web application" client instead of "Desktop app" is rejected by name
+  rather than failing later with an opaque redirect-URI mismatch.
+  **Action required:** download your own client JSON and save it to one of the paths above.
+  Existing tokens keep working until they expire; re-minting needs the file. The previously
+  embedded client should be revoked in the Cloud Console — it is recoverable from git history.
+- **3-Eyes is labelled alpha at both entry points.** A banner in `utils/3-eyes/README.md` and the
+  `three_eyes --help` description now name it a diagnostic tool outside the supported core, and
+  name the known defect: `pause` does not stop a launchd-managed job, so a "paused" writer can
+  still be running — use `launchctl bootout` and verify.
+
+### Security
+- **Removed the embedded Google OAuth client credentials.** The client id and secret were stored
+  base64-encoded with the stated intent of avoiding secret scanners, which meant a scan of this
+  repository would report clean while shipping a live credential. A regression test now fails if
+  any credential — or the base64 indirection itself — reappears in that module.
+- **Operator PII removed from tracked files** ahead of publication: three home-directory paths in
+  this changelog (including a `~/secrets/*.env` path), a `file:///Users/...` URL emitted into
+  generated `CATALOG.md` output by `three_eyes/catalog.py`, and a hardcoded vault path in
+  `utils/obsidian_daily_rollover.py` that contained an operator's full name (now `OBSIDIAN_VAULT`).
+
+## [0.69.1] - 2026-08-15
+
+### Security
+- **`js-yaml` 4.3.0 → 4.3.1 in the pulse-tree-view extension lockfile** (GHSA-5p4m-2wfm-xmqj,
+  CVE-2026-59870). Quadratic CPU consumption resolving `!!omap`, so a crafted YAML document can
+  stall the parser — a denial of service, not a disclosure. Scope is narrow and worth stating
+  plainly: `js-yaml` is a transitive **dev** dependency of one VS Code extension, absent from the
+  Python package a user installs and from every path the README's Getting Started walks. Lockfile
+  only — the dependency was not promoted to a direct or runtime dependency, and `package.json` is
+  unchanged.
+
+## [0.69.0] - 2026-08-14
+
+### Changed
+- **The store now tells the truth about its own size: 14.6 GB down to 3.8 GB.** 2,678,350 orphaned
+  vectors — 98.7% of the vector table, left behind by a writer that deleted and re-inserted
+  documents under fresh ids without pruning what pointed at them — were deleted and the file
+  rebuilt. The live vector count was identical before and after, which is the assertion that
+  proves only garbage went. Both orphan health checks now report zero where they had been failing.
+  The pre-reclaim database and a verified backup are retained until a full sync cycle confirms the
+  result.
+
+### Fixed
+- **The embedding backlog was reported 25x too large.** The health check compared every
+  document's stored embedding-model version against a fallback string, because the accessor it
+  imported to get the real one no longer exists and the failure was swallowed. Every correctly
+  embedded document therefore compared unequal and counted as pending: the backlog read 47,914
+  when the true figure was ~1,762. The check now builds the version string the same way the
+  embedder stamps it, so the number means what it says.
+- **The writer fence knew about five scheduled jobs out of eleven.** Verification fails closed on
+  any loaded job it does not recognise, so the six it had never heard of did not slip through the
+  fence — they made the fence impossible to satisfy, and the maintenance window could not have
+  started at all. The roster now covers every job that gets loaded, and the reader/writer
+  distinction is deliberately not drawn: a reader holds an open connection, and an open
+  connection defeats both the checkpoint and the exclusive lock the rebuild depends on. One of
+  the six looks like a static page generator and turns out to open the database through a health
+  check.
+- **A safety gate stood between a multi-million-row delete and a live writer, and it was
+  checking the wrong file.** The writer-fencing script defaults its database path to the
+  repository root, and the reclaim procedure never overrode it — so a stale copy left in the
+  working tree from June would have absorbed the lock check and reported the store safely fenced
+  while the real one still had writers attached. The procedure now pins both the database path
+  and the interpreter, with the reason recorded where the next operator will read it.
+
+## [0.68.7] - 2026-08-07
+
+### Fixed
+- **The direct-commit sync was destroying its own embeddings on every run, and had
+  quietly grown the database to 13.5 GiB — 92% of it garbage.** Each sync deleted every
+  direct-commit document and re-inserted it with a fresh identifier, so the vectors keyed
+  to the old identifiers were orphaned rather than removed. Eighteen runs a day, ~15.5k
+  orphans each, accumulating unbounded: 2.68 million dead vectors holding 10.2 GiB.
+  The same pass then re-embedded ~15.5k byte-identical documents it had just recreated,
+  which is roughly 280k needless embedding operations a day and the main reason the
+  embedding stage stayed hot enough to keep tripping the memory guard.
+
+  The writer now updates in place, keyed on a stable source identifier, and preserves
+  both the identifier and the content hash when the content has not changed — so an
+  unchanged commit keeps its vector and is never re-embedded. Orphan growth has been
+  confirmed flat across fourteen sync cycles since. Reclaiming the space that already
+  accumulated is a separate, operator-run maintenance step, deliberately not automated.
+
+### Added
+- **A hard zero-orphan invariant in the health check, for both embedding families.**
+  Twelve gigabytes accumulated over roughly nine days with nothing raising an alarm,
+  which was a detection gap as much as a writer bug. The check now fails outright on any
+  orphaned vector and reports real table sizes and their share of the database.
+
+  Two deliberate choices: the companion backlog check counts absolute unembedded
+  documents rather than a coverage ratio, because coverage oscillates widely within a
+  single sync cycle (measured 9.7% missing and 67.9% missing on the same day, both
+  healthy) and a ratio would page during normal operation; and table sizes are measured
+  without relying on page-level statistics, which report zero bytes for a virtual table.
+- **A tested toolchain for the reclaim itself** — writer fencing with verification and
+  restore, and a batched, resumable, checkpointing delete-and-rebuild that refuses to run
+  against the real database without an explicit acknowledgement, refuses to overwrite an
+  existing rebuild target, and aborts rather than reporting success if a checkpoint comes
+  back blocked or if the live vector count changes. Nothing has been run against
+  production data.
+
+### Changed
+- The test suite now probes for a usable GPU device out of process and skips the tests
+  that need one when it is absent. Previously those tests called the framework directly,
+  which aborts the whole process rather than raising when no device is reachable — so a
+  single unreachable-GPU environment destroyed every other test's result in the same run.
+  An in-test guard could not catch it, because a process abort is not an exception.
+
+## [0.68.6] - 2026-08-05
+
+### Added
+- **`scripts/uninstall_rebalance.sh` — reverses what the 13 `install_*.sh` scripts put on a
+  device (GH-257).** The job list is **derived** from `scripts/*.plist.template` rather than
+  hardcoded, because the templates *are* the set of installable jobs, so a job added later is
+  uninstallable with no edit here. Before deleting anything it **reads each plist and requires
+  it to reference the owning path**: `~/Library/LaunchAgents` also holds Google, Setapp and
+  Homebrew agents, and matching a label is not authority to delete a file. Jobs installed
+  outside the template convention (`com.user.git-pulse`, `com.user.git-pulse-health`) are
+  named explicitly — never matched by a `com.user.*` glob — and carry their own ownership
+  marker, since `experimental/git-pulse/install.sh` copies its executable to `~/bin` and its
+  plist never mentions this repo. Dry-run by default; data and keyring removal are separately
+  opt-in because unloading a job is reversible and deleting a log history is not. Exits
+  non-zero on partial failure, and a dry run reports "would be removed" rather than claiming
+  the past tense. The git checkout, `.venv`, and HiQS are out of scope by design — HiQS is
+  independently installed and keeps working after a full rebalance uninstall.
+
+## [0.68.5] - 2026-08-04
+
+### Fixed
+- **HiQS: hybrid search was not hybrid — the lexical leg had never returned a usable
+  result.** FTS5's implicit operator is AND, and `_fts_search` joined query terms with a
+  space, so a question demanded that one chunk contain *every* word in it. Across the 22
+  Checkpoint A queries the leg returned 35 hits and **all 35 were the operator's own prompt
+  log**, since the only text holding a question verbatim is the record of it being asked;
+  excluding that log left the leg returning nothing at all. Every result Checkpoint A offered
+  for judging came from the vector leg alone. Terms are now ORed and ranked by bm25 so rare
+  terms dominate without requiring all of them, and explicit FTS5 syntax from a caller is
+  honoured rather than rewritten. Usable FTS hits across the eval went 0 → 697, queries with
+  no lexical hit went 22/22 → 0/22, and MiniLM/Qwen3 top-5 agreement rose from 0.77/5 to
+  2.18/5. A regression test in `test_eval_retrieval.py` had been green *because* of this
+  defect — its three models disagreed only because the lexical leg matched nothing — so its
+  fixture now shares no term with its queries and isolates the vector leg deliberately.
+- **HiQS Checkpoint A resolved to `unknown`.** MiniLM ships because §6.3 sends ties and
+  unknowns to the incumbent, not because it measured better; the 22 pairs remain unjudged and
+  both models' vectors coexist in `docs_vec`, so reopening it costs a config change and one
+  6-minute re-embed.
+
+## [0.68.4] - 2026-08-04
+
+### Fixed
+- **HiQS: the §6.3 truncation gate was run for the first time and failed at 64.0%
+  against a ≥95% bar — MiniLM had been silently discarding the tail of a third of
+  every indexed document for the entire life of the index, with 139 tests green and
+  `docs_vec` full.** The same unbounded chunk is why Qwen3-Embedding-0.6B OOM'd twice
+  (14.32 GiB, 16.61 GiB): its context is 32768, so it truncated nothing and ran
+  attention over a 6893-token sequence. The two models were never seeing the same
+  input, so the Checkpoint A comparison was invalid before it was run. A shared chunk
+  cap now lives in `HiQS/hiqs/chunking.py` — at the seam every source shares, not in
+  `vault.py` as the plan's remedy said, because measured per source vault was 77.5%
+  and **github 11.7%** (it emitted whole issue bodies as one document), so a
+  vault-only cap would have left the corpus at ~78% while looking fixed. The 600-char
+  value was chosen by running the real gate over the real corpus for each candidate
+  (700 → 93.2% FAIL, 600 → 98.2% PASS, 500 → 99.8%), not derived — the measured
+  chars/token ratio spans 1.69–4.06. Corpus re-indexed: **6,044 chunks, 98.2% fit,
+  max 350 tokens**, and Qwen3 peak RSS fell from >14 GiB to 2.16 GiB. The gate is now
+  executable (`tests/judge_pairwise.truncation_gate`) and runs before scoring; an
+  unmeasurable gate or an empty corpus raises rather than passing.
+- **HiQS: `hiqs refresh` exited 0 while every configured GitHub repo failed to
+  fetch.** `github.fetch` collects per-repo failures into `SyncReport.errors` instead
+  of raising, so the walk's exception handler never saw them and the summary printed
+  `errors: {}` — a launchd job could not have distinguished that run from a clean
+  one. `refresh` now reports `source_errors` and exits non-zero on them. The §5 rule 2
+  reconciliation was correct throughout: with no repo attested it pruned nothing and
+  330 stale rows survived by design, which is how the exit-code bug became visible.
+
+## [0.68.3] - 2026-08-03
+
+### Added
+- **HiQS Phase 0 and Phase 1 are built, reviewed, and green — the first HiQS code
+  in the repo.** Two XYZ marathons (M1 skeleton, 6 phases; M2 vault + search, 4
+  phases) ran builder↔reviewer relays with the pair alternated per marathon, and
+  every phase is `STATUS: Approved` with its pre-advance gate passing. The result
+  is 1,499 LOC of core across `plugins.py`, `db.py`, `config.py`, `events.py`,
+  `__main__.py`, `sources/vault.py`, `docs_index.py` and `search.py`, against 12
+  test modules — **107 passed, 1 xfailed** (the remaining xfail is the M4 ranking
+  seam, correctly still forward-declared). Well inside the §11 ≤3,000 LOC budget.
+- **`HiQS/GUIDING-PRINCIPLES.md` — the tie-breaker doc.** The four tenets, the four
+  counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL), an *ordered* precedence for
+  when they collide, nine standing decisions with their reasoning, the six inherited
+  anti-pattern clusters distilled from this repo's 68-release scar record, and four
+  working rules. Self-contained so it survives extraction to HiQS-Suite/HiQS. Its
+  governing lesson is L23: a principle that lives in a changelog protects exactly one
+  code path, so lessons are pinned at the seam, not in the module.
+
+### Changed
+- **§5 rule 2 gained the attestation channel it was missing — `SyncReport.units_ok`
+  and `Doc.unit`.** The rule mandated reconciling within successfully fetched units,
+  but nothing in the contract could say which units a run fetched: `docs()` takes only
+  a connection and cannot know what `fetch()` attempted, so *fetched fine, now empty*
+  and *could not read* were the same observation. The build stalled twice at the round
+  cap proving it, while the builder accumulated four workarounds in `docs_index.py` —
+  a parameter with no production caller, duck-typed methods a frozen dataclass cannot
+  expose, a probe for a table nothing creates, and inference from raw tracking rows
+  that carry no run identity. A cross-model consult (codex + agy, independently) found
+  no fix existed below the contract. All four workarounds are now deleted.
+  `Doc.unit` came with it: unit membership was being recovered by splitting ids on
+  `:`, which silently returns the wrong unit for any path containing a colon and then
+  prunes the wrong rows. A richer design (per-unit state enum, run ids, a fifth
+  callable) was considered and rejected as too much machinery for three sources.
+- **Rule 2 now states that a deletion is a successful fetch.** A path absent from a
+  clean walk is attested and prunes; absent from an errored walk it is unknown and
+  prunes nothing. This resolved a standing contradiction where the brief forbade
+  cross-unit deletion yet deleting a note had to remove it from search.
+- **`numpy` is a declared dependency**, not a transitive one. `search.py` imports it
+  directly; leaning on its arrival via `sentence-transformers` is what let the staged
+  install (torch deferred until the Checkpoint A vector gate) omit it and fail an
+  otherwise-approved phase's gate.
+
+### Fixed
+- **The Phase 6 clean-room gate passed vacuously on a missing root.** `rglob` over a
+  path that does not exist yields nothing and `assert [] == []` passes while scanning
+  zero files — and §19 archives this repo and moves HiQS out, deleting that root out
+  from under the gate that authorises the extraction. Verified by pointing it at a
+  missing path: silently green. It now asserts coverage first and fails loud.
+- **The same gate walked `HiQS/.venv`** — 847 of 862 files, 78% of suite runtime.
+  Measured against the incumbent's ML venv (what this plan installs next): 10,460
+  files, 17.8s per run, before torch. Now first-party only.
+
+## [0.68.2] - 2026-08-03
+
+### Added
+- **The HiQS clean-room rebuild plan is now a tracked project doc.** It arrived as
+  a standalone rev-5 planning document with no lifecycle metadata, so nothing in the
+  repo could see it: it carried no frontmatter, no status table, no per-phase QA
+  gates, and no roadmap pointer, which means a cold agent had no way to tell which of
+  its six phases was live or what "done" looked like for any of them. It now satisfies
+  the PROJECT/PDDA.md contract — frontmatter with triage ratings, the two-column status
+  table, a table of contents spanning all six phases, an explicit QA gate after each
+  phase (with the phase's deploy requirement stated, since two of the six touch the
+  operator's real device and cannot be proven in tests), and a ledger entry in
+  ROADMAP.md.
+
+  The plan's own deletion ledger retires doc-governance machinery *from the product it
+  describes*, which reads as a contradiction against governing the plan itself, so the
+  boundary is now written down rather than left to be re-litigated: the product ships
+  no governance machinery; the plan that builds it is still a tracked doc in a governed
+  repo. Verified with `utils/pdda/pdda.sh` — zero findings against the doc; the seven
+  roadmap-coverage errors that remain in the repo are pre-existing and unrelated.
+
+### Changed
+- **HiQS will be built inside this repository rather than as a separate one.** The
+  clean-room property it needs — that the rebuild shares no code with the incumbent —
+  was going to be enforced by the repository boundary. It is now enforced by a test
+  that fails if either tree imports the other, which is a stronger guarantee than
+  separation by convention and costs one file. The plan and the code it governs
+  consequently share one history. The database is explicitly *not* included: it stays
+  at the canonical application-data path, as the plan's own path lesson requires.
+
+- **A standalone anti-patterns ledger was verified and folded into the plan.** Every
+  version it cited was re-checked against this changelog and every figure held. Two
+  things did not survive review: one entry restated an email-volume claim that a later
+  entry had already corrected downward, and one entry was filed as history when it is
+  in fact still true of the running system today — two web servers still declare an
+  overlapping set of routes. Both corrections are recorded at the fold-in, and the
+  bet is stated plainly: a lesson drawn from a defect that is still open carries more
+  weight than one drawn from a defect already closed, so the plan's one-server rule is
+  the item to watch. The ledger's six-cluster taxonomy and the seven incidents the
+  plan's existing lessons had not covered were merged in, and two of those incidents
+  produced new rules for the plugin contract rather than only prose: every network
+  call must carry its own timeout, and a progress watermark may only advance after the
+  fetch it describes actually completed. The source document is retained as provenance
+  under PROJECT/4-MISC with a pointer to what superseded it.
+
+### Fixed
+- **A two-round headless review of the plan found six substantive defects, all fixed.**
+  The plan was driven through the relay harness with an independent model as reviewer.
+  Worth recording because the rounds found *different classes*, which is the argument
+  for not stopping at one.
+
+  The most consequential was a rule that would have corrupted the search corpus while
+  reporting success. Notes are split into chunks by heading, and the plugin contract
+  said never to delete. Renaming or removing a heading therefore emitted a new chunk
+  and orphaned the old rows permanently, where they would keep matching queries and
+  keep surfacing in results — retrieval decaying from content that no longer exists,
+  while the sync returned success, health read fine, the counts stayed honest, and
+  every payload stayed well-formed. The planned quality evaluation could not have
+  caught it either, since a frozen question set scored against a fresh index has no
+  orphans yet. The rule is now scoped: reconcile within a unit that fetched
+  successfully, never across units and never after a failure, with the pruned count
+  reported and an implausible prune raised as a warning. The half of the old rule that
+  earns its keep is intact — a source returning nothing transiently still cannot empty
+  the corpus.
+
+  Two gates were unfalsifiable. One offered to close a failing check by rewording what
+  the check measured, which is the same defect the plan had just finished removing from
+  its other evaluation, reintroduced one section later; it now blocks, and rewording is
+  demoted to a recorded consequence of an explicit override. The other was purely
+  relative — "beat a simple baseline by one item" — which passes a poor absolute result
+  whenever the baseline is also poor, so an absolute floor was added alongside it.
+
+  The second round found that the first round's own fix had been applied in one of the
+  two places it needed to be, plus two operational holes that only appear when a path is
+  traced end to end: no way for an operator to re-authorize an expired credential, on a
+  system whose only runner is an unattended background job that cannot open a browser;
+  and no limit on how many chunks of one document may occupy a result page, so a single
+  long note could crowd out everything else. A sixth finding, filed as a nit, was really
+  a crash: the schema deliberately lets two embedding models coexist, and reading them
+  without filtering to one mixes incompatible vector widths in a single array.
+
+  Three of the six are the same meta-pattern the plan is built to prevent — a state
+  that reports success while degrading. That a plan written specifically against that
+  pattern still contained three instances of it is the honest result here, and the
+  reason the review happened before any code was written rather than after.
+
+- **The HiQS subtree is a staging home, and planning for its departure surfaced a
+  disclosure gate that would have been discovered after the fact.** The operator
+  confirmed the code spins out to its own public repository once stable, and that this
+  repository is archived within weeks. Both were recorded as a phase rather than an
+  intention, because a planned migration that is not a phase is a migration improvised
+  at the last minute.
+
+  Tracing that path found the problem. The plan mandates committing two frozen answer
+  keys — a set of real questions drawn from the operator's private notes, explicitly
+  including client and project names, and a set of verbatim working days carrying real
+  titles, meetings, and people. Freezing them is the entire anti-gaming mechanism, so
+  they cannot simply be dropped. But they were specced for a private tree and the
+  destination is public, and a retrofit after that push does not un-publish anything.
+  The sets now separate the operator's judgments, which are committed and frozen, from
+  the source text, which stays in a local file that never leaves the machine; the
+  scoring tools report an explicit unknown rather than silently scoring a subset when
+  that file is absent. A scan of the full history the extraction will carry — not just
+  its most recent state — is a blocking gate, because history is the part that cannot
+  be fixed with a follow-up commit.
+
+  Recorded alongside it: the archive is a deadline on replacing the incumbent, not on
+  the code, and archiving a repository does not uninstall the software it holds. The
+  local system keeps running; what ends is the ability to fix it. So the risk is a
+  fallback that becomes unmaintained on an unknown date, and the stated mitigation is
+  phase order — the early phases deliver the daily use, the later ones are deferrable,
+  and if the date tightens the scope comes off the back rather than off the
+  verification gates.
+
+## [0.68.1] - 2026-07-26
+
+### Changed
+- **The cross-repo triage command is now named for what it does, not for one of the
+  repos it looks at.** The original name implied it only served the agent-harness
+  project, when the method is general: give it any set of related repositories and it
+  reports which open issues would unblock the most work across them. The default set
+  is unchanged, and the repositories are now passed in rather than assumed, so the
+  command works for any suite. Also relaxed an internal assumption so it degrades to
+  GitHub-only inputs when the local signal tooling is unavailable.
+
+## [0.68.0] - 2026-07-26
+
+### Added
+- **A cross-repo triage command that answers "what should I fix first?"** across the
+  three connected suites — the agent harness, the signal layer, and the doc-governance
+  lifecycle. Instead of ranking by severity or issue count, it builds a graph of which
+  open issues other open issues point at, groups issues that turn out to share a single
+  underlying cause, and reports what closing each one would unblock. It is read-only:
+  it never edits, closes, or pushes anything.
+
+  Two habits are built in because both caught real errors while the method was being
+  worked out. Every candidate is checked against GitHub itself before it is reported —
+  an issue recorded as "fixed on a branch" may still be open with the branch unmerged,
+  and a metric that looks impossible usually is. And any measurement that disagrees
+  with reality is treated as a finding in its own right rather than quietly passed
+  along; that is how the merge-count defect below was found.
+
+### Fixed
+- **Memory readings for background jobs were measured with the wrong ruler.** The job
+  watchdog judged a job by memory currently held in RAM, which on this platform excludes
+  anything the system has compressed or swapped out. Two scheduled jobs each grew to
+  roughly forty-six gigabytes while reporting about thirty megabytes, so no ceiling could
+  ever trip, and the machine ran out of memory instead. The forensic tooling now reads the
+  figure that includes compressed pages, records which measurement it used for every
+  sample, and captures the free-memory, swap and disk context that explains a stall. The
+  watchdog fix itself is tracked separately and not included here.
+
+## [0.67.4] - 2026-07-24
+
+### Fixed
+- **The command-line interface would not start at all.** Removing the Anthropic
+  API key dependency left two modules still importing a helper that no longer
+  existed, so every command — including the health check operators are asked to
+  run before committing — failed immediately with an import error instead of
+  running. The stale references are gone and the health check passes again. The
+  removed helper was already unused; the Gemini key lookup that replaced it was
+  in place.
+
+## [0.67.3] - 2026-07-24
+
+### Added
+- **Editable local Gemma instructions for 3-Eyes (GH-195).** The classifier now
+  loads `gemma_system_instructions.md` from beside its runtime package and sends
+  it as Ollama's `system` message. The instructions define a safety-first local
+  observability role, evidence and uncertainty rules, severity definitions,
+  escalation boundaries, and a JSON-only response contract. A missing or empty
+  file fails closed rather than calling the model without those controls.
+
+### Changed
+- **3-Eyes is explicitly optional and experimental.** Its README and operational
+  spec now point Codex, Claude Code, and human operators to the one prompt-tuning
+  surface; the classifier also honors the operator-local `THREE_EYES_MODEL`
+  setting.
+- **PDDA lifecycle reconciled for GH-195.** The active design record now lives in
+  `PROJECT/2-WORKING`, has current status and phase coverage, and its ROADMAP
+  pointer reflects the Gemma instruction surface.
+
+### Tests
+- **3-Eyes suite:** 94 passed, including a classifier integration test that
+  asserts the editable instructions and configured model reach the Ollama payload.
+
+## [0.67.2] - 2026-07-22
+
+### Fixed
+- **GH-154 was recorded as unmerged; it shipped on 2026-07-19.** The 0.67.1 pass corrected
+  ROADMAP's stale "Planning — no code written" claim, but replaced it with a second wrong
+  claim — "built and verified, branch unmerged" — by trusting the GH-154 doc's own
+  `status:` field for the merge half while only verifying the build half. `feat/theme-picker`
+  merged to `development` on 2026-07-19 via **PR #163** (tip `613f77b`, merge `0970d3f`);
+  `git merge-base --is-ancestor` confirms it, and the `/settings` route with its preset grid
+  is present in `web.py` on `development`. Corrected in all six places the claim had spread:
+  the GH-154 parent doc's `status:` field and Status table, its five phase briefs, the
+  ROADMAP ledger entry, and the ROADMAP Status table.
+- **Method note.** The 0.67.1 pass verified "is the code built?" with git and took "is it
+  merged?" from prose. A doc's own status field is not evidence about the branch it
+  describes — both halves needed `git`/`gh`. The remaining GH-154 items (legacy-alias
+  retirement, first-paint CDP check, light-theme visual pass) are **post-merge** work, not
+  blockers to a merge.
+
+## [0.67.1] - 2026-07-22
+
+### Fixed
+- **PDDA doc hygiene: 30 errors → 0.** The deterministic suite now passes clean across
+  frontmatter, status-table, hardcoded-paths, roadmap, roadmap-coverage, changelog,
+  releases, and governance.
+  - **5 GH-154 phase briefs** had no YAML frontmatter at all — added the required
+    contract (`title`/`status`/`created`/`updated`/`owner`/`goal`) plus `gh_issue`,
+    `roadmap_exempt: true`, and a `## Status` table, matching the GH-146 brief precedent.
+  - **5 MARATHON-2026-07-21 phase briefs** were missing `goal` and a `## Status` table.
+  - **GH-136** was missing `owner` and a `## Status` table.
+  - **GH-169** carried an absolute `/Users/...` path inside a lessons note; reworded to a
+    repo-relative description that keeps the lesson.
+  - **GH-155** (closed 2026-07-19) was an unparked `1-INBOX` capture; now has a ROADMAP
+    queue entry recording that GH-169 absorbed its remaining scope.
+
+### Changed
+- **Two stale claims corrected against evidence, not prose.**
+  - `GH-136`'s frontmatter said Day 0/Day 1 were "complete on branch marathon/2026-07-17,
+    unmerged". PR #143 merged 2026-07-18 and `09be427` is an ancestor of `development` —
+    both verified — so the doc was wrong and ROADMAP was right.
+  - `GH-154` was recorded in ROADMAP as "Planning — no code written". P0–P5 are in fact
+    built, verified, and **merged to `development` 2026-07-19 via PR #163**
+    (`feat/theme-picker`, tip `613f77b`) — the `/settings` route and preset grid are live
+    there. See 0.67.2 for the follow-on correction: the first pass at this fix said
+    "built but unmerged", which was also wrong.
+
+### Notes
+- `owner:` values across `PROJECT/**` are inconsistent — 8 distinct spellings including
+  `noel`, `Noel`, `Noel Saw`, `noel@neochro.me`, plus the template placeholder
+  `Name or agent` and a stray `GitHub Copilot`. Docs touched here use `Noel`. Normalizing
+  the rest is deliberately left as a separate, opt-in sweep.
+- `issue-doc-sync` warns rose 15 → 20 as newly-frontmattered briefs became eligible for
+  comparison against live GitHub issue state. Warn-only by design.
+
+## [0.67.0] - 2026-07-22
+
+### Fixed
+- **3-Eyes fleet health called a running server "failing" (GH-195, GH-146 bug class).**
+  `health.py` read only the *status* column of `launchctl list` and ignored the *PID*
+  column, so `com.rebalance-os.pulse-server` — alive on PID 35845 — reported
+  `FAIL(exit -15)` because a *previous* instance had been SIGTERMed by a restart. Since
+  restarting the pulse-server is a routine operation, the fleet showed a permanent
+  phantom failure. Liveness now comes from the PID column: a job with a live PID is
+  `ok`, and the prior exit code is still surfaced (`running; prior exit -15`) rather
+  than hidden. This is the same misread `doctor._check_launchd` was fixed for in
+  GH-146, reproduced in 3-Eyes' own health module.
+- **A health probe that could not run reported a confident answer.** Inside a sandboxed
+  shell `launchctl list` exits 1 with no output; `_launchctl_list()` never checked
+  `returncode`, so it returned `{}` and every catalogued job fell through to
+  `not-loaded` — "0 ok · 0 FAILING · 29 not-loaded", indistinguishable from a real
+  dormant fleet. It now raises `LaunchctlUnavailable`, and `scan()` reports a distinct
+  `unknown` state with the reason attached.
+- **The Focus 5 Float tile rendered an unreadable fleet as green.** Because the tile
+  keyed on `failing == 0`, an unavailable probe produced the card *"3-Eyes — all jobs
+  OK"* on the operator's primary panel while nothing at all was known. It now renders
+  *"3-Eyes — job health UNKNOWN"* with `is_dirty` set, so an unreadable fleet looks
+  like it needs attention instead of a clean bill of health.
+
+### Added
+- **Adoption guard: `supersedes` (GH-195).** A registry job may now declare the legacy
+  launchd labels it replaces, and `install` refuses while any of them is still loaded.
+  `collector-health` declares `com.rebalance-os.health-check` and
+  `health-check-triage`; both run `scripts/health_issue_reporter.py`, so installing it
+  against the live incumbents would have stood up a *second* GitHub-issue emitter and
+  reproduced the duplicate-issue defect that #139 was closed by deleting. The check is
+  **fail-closed** — only a positive `not-loaded` clears the gate, so an unreadable
+  probe blocks the install rather than waving it through.
+
+### Tests
+- +10 cases (93 total): PID-beats-prior-SIGTERM liveness, `unknown`-not-healthy on an
+  unreachable probe, non-zero-exit raises rather than returning empty, PID/status
+  column parsing, `supersedes` parsing/defaults, the shipped `collector-health`
+  declaration, and four install-guard cases including the fail-closed `unknown` path
+  and a no-probe-when-empty assertion.
+
+### Operational
+- The three `com.neochro.ga-pull-*` agents (binoid/bloomz/bounce) were **booted out and
+  disabled** on the Mac Studio. They had failed on all 85 runs since 2026-04-24 with
+  `ModuleNotFoundError: No module named 'wpdbtk'` — a `sys.path` problem, not a missing
+  package (the script is invoked by absolute path, so the repo-root package is
+  invisible; `WorkingDirectory` does not put CWD on `sys.path`). Tracked in
+  [BinoidCBD/LTVera-Pandas#70](https://github.com/BinoidCBD/LTVera-Pandas/issues/70);
+  plists and logs were left in place, and `launchctl enable` reverses it.
+- Fleet health after both fixes: **25 ok · 0 FAILING · 4 not-loaded** (was reported as
+  24 ok · 4 FAILING · 1 not-loaded, of which 1 was a phantom).
+
+## [0.66.0] - 2026-07-22
+
+### Added
+- **3-Eyes — first real adoption + machine-local registry overlay (GH-195).**
+  - **Machine-local overlay** — gitignored `registry/jobs.local.d/*.toml` and
+    `registry/commands.local.allow` let an adopted automation whose command is an
+    *absolute, machine-specific path* (outside rebalance-OS) enter 3-Eyes without
+    leaking that path into the committed registry. Runtime (`run`/`status`/`list`/
+    `health`/`catalog`) reads the overlay (`include_local=True`); the committed,
+    fleet-portable `DASHBOARD.md` renders committed-only (`include_local=False`) so
+    a downstream clone never inherits another machine's jobs. `.example` + a
+    `jobs.local.d/README.md` document the mechanism.
+  - **Adopted `skill-sync`** (the Claude Skills `SKILL.md` LWW sync) as the first
+    managed job. Its ad-hoc `com.local.skill-sync` LaunchAgent had been failing at
+    the launchd layer (`exit 78 EX_CONFIG`, no run since 2026-07-08) though the
+    script itself was healthy; 3-Eyes renders a fresh `com.rebalance-os.3eyes.skill-sync`
+    plist and the stale plist is retired so nothing double-schedules — one move
+    fixes the failure and completes the adoption.
+
+- **Focus 5 Float — 3-Eyes job-health tile (GH-195).** `GET /focus-5.json`
+  (`src/rebalance/web.py`) now appends ONE synthetic roster card summarizing 3-Eyes
+  fleet job health — a red status dot + `"3-Eyes — N jobs FAILING"` when any
+  catalogued job is failing, healthy otherwise — so the failure signal rides on the
+  panel the operator already watches. It renders through the app's existing dynamic
+  roster (no native-app change; documented in `Focus5Float/CONTRACT.md`). Additive +
+  defensive (never breaks the endpoint), gated on 3-Eyes being active (a downstream/
+  inert clone never shows it), and short-TTL cached so the polled route never spawns
+  `launchctl list` per request. `summary.roster_size` stays repo-only.
+
+### Changed
+- **3-Eyes notify throttle** — a job that is *already* quarantined now re-routes only
+  to `log-only` on each skipped run instead of re-firing a `notify` banner every
+  scheduling tick (a 120s job would otherwise banner every 2 minutes). The operator
+  is still banner-alerted once, at the moment the breaker opens.
+
+### Tests
+- +8 cases (83 total): machine-local overlay load/exclude/validate/dashboard-isolation
+  and the quarantine re-notify throttle.
+
+### Operational status
+- **3-Eyes is now ACTIVE on Noel's Mac Studio** — this is a device-local activation, not
+  a repo default: it rides the gitignored `config/runtime.env`, so every other clone stays
+  inert. It manages `com.rebalance-os.3eyes.skill-sync` (plus the `selfcheck` demo job),
+  the stale ad-hoc `com.local.skill-sync` LaunchAgent is retired, and the Focus 5 Float
+  fleet-health tile is live. The committed `collector-health` job is registered but not
+  yet installed; everything else in the catalog is observed, not managed.
+- **Continuity check:** `cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status`.
+  **Deactivate on a device:** remove/edit `config/runtime.env` (or `THREE_EYES_ENABLE=0`);
+  **retire a managed plist:** `python -m three_eyes uninstall <job>`.
+- **Known quirk:** `three_eyes health` shells out to `launchctl list`, which a sandboxed
+  shell blocks — it then reports *every* job `not-loaded`. Re-run it unsandboxed before
+  concluding anything about fleet health.
+
+## [0.65.0] - 2026-07-22
+
+### Added
+- **3-Eyes — unified local job supervisor (GH-195)** in `utils/3-eyes/`. One
+  optional, Python-first system that unifies the three sentinels we run today (XYZ
+  debug flywheel, Cactus Needle PDDA sentinel, Rebalance collector-health) under a
+  single TOML registry, one set of circuit breakers + pressure-relief valves, one
+  generated dashboard, and one way to talk to jobs (CLI + MCP + Claude skills).
+  - **Inert by default** — with no gitignored `config/runtime.env` (or
+    `THREE_EYES_ENABLE!=1`) it is a clean no-op: zero network / ollama / gh /
+    launchd / cron. Proven by `tests/test_inert_by_default.py` (egress primitives
+    stubbed to fail loudly). Two hard kill-switches: `THREE_EYES_ENABLE=0`, PANIC file.
+  - **Registry is the source of truth** — launchd/cron entries render from the TOML;
+    `DASHBOARD.md` is a deterministic generated projection kept honest by
+    `python -m three_eyes.dashboard --check` in CI + a `regen-dashboard` pre-commit hook.
+  - **Safety** — circuit breakers wrap the existing `utils/job_guard.py` (GH-172
+    single-instance flock + memory ceiling) and add a per-job failure breaker;
+    relief valves add daily/per-run LLM budgets, quiet-hours, and backoff. A
+    `commands.allow` allowlist means no free-form command execution.
+  - Egress confined to two boundary modules (`classify.py` ollama, `routes.py` gh),
+    enforced by a static-guard test. 51 pytest cases, wired into CI.
+
+## [0.64.2] - 2026-07-21
+
+### Fixed
+- The floating macOS app icon now uses the platform-sized transparent margin, so its visual footprint matches neighboring Dock and app-switcher icons instead of appearing oversized.
+
+## [0.64.1] - 2026-07-21
+
+### Fixed
+- The floating macOS panel now reopens after being hidden, resizes vertically without inheriting a maximum from the wrong display, and draws its visible shell to the menu-bar boundary instead of retaining a hidden-titlebar safe-area gap. Real panel-chrome regression coverage protects both the unbounded-height contract and the zero top inset.
+
+## [0.64.0] - 2026-07-19
+
+### Added
+- **GH-164 Cognee integration plan + technical spike artifacts.** Added a new active PDDA plan doc for Cognee integration (`PROJECT/2-WORKING/GH-164-COGNEE-INTEGRATION-PLAN.md`) with phased QA gates and recorded Phase 0 findings. The spike validated local Cognee runtime in an isolated venv (`cognee==1.4.0`), completed a session-memory `remember`→`recall` roundtrip, and projected recall output into a probe SQLite table (`temp/spikes/gh-164-cognee/spike_results.sqlite`) to prove ingest-shape viability before implementation.
+
+### Fixed
+- **Focus5Float's Prompt Log viewer no longer loads an unbounded CLIO file into memory.** The
+  `PromptLogReader.load` path read the entire `.md` into RAM, split every line, and parsed every
+  entry with no cap — then re-did it on the 90s poll timer. A CLIO log accumulates forever and
+  never rotates, so at tens of MB this would hitch the panel and balloon its footprint each poll.
+  `load` is now bounded: a **1 MB byte ceiling** on the read and a **10k-entry row cap**, both
+  keeping the *newest* prompts (CLIO writes newest-first at the top of the file). Added 3 tests
+  (row cap, byte-ceiling truncation, missing-file).
+
+### Changed
+- **DRY: extracted the shared bounded-file read into `FileLoad`.** The telemetry `.md` viewer
+  already had a 1 MB ceiling + 10k row cap (GH-121); the prompt-log viewer had neither. Rather
+  than duplicate the guard, both viewers now call `FileLoad.boundedText(_:byteCeiling:)`, and
+  `Focus5Model.telemetryMarkdownByteCeiling` / `telemetryRowCap` alias `FileLoad.markdownByteCeiling`
+  / `feedRowCap` (single source of truth). The two parsers stay separate — only the read mechanism
+  is shared. 51 swift tests pass (+3).
+
+## [0.63.0] - 2026-07-19
+
+### Added
+- **CLIO exporter is now idempotent by content and self-healing across devices.** Implemented
+  Phases 1–2 of the durability plan (via marathon; builder codex, reviewer agy) in the
+  `prompt-log-to-md.sh` exporter in `utils/CLIO/INSTALL.md`:
+  - Every rendered entry carries an invisible `<!-- clio:id:session_id:timestamp -->` marker,
+    emitted inline by the existing `jq` pass. The exporter skips any entry whose ID is already
+    in the note, so re-runs and a deleted/corrupt cursor state no longer duplicate; the cursor
+    is demoted to a scan optimization. A verify-after-write step withholds the cursor advance
+    until the emitted IDs are confirmed present.
+  - Conflict-copy reconciliation: before exporting, it recovers full entry blocks stranded in
+    sync conflict siblings (`*.sync-conflict-*.md`, `* (conflicted copy*).md`, iCloud numeric
+    dupes), deduped by ID, and **quarantines** each processed copy under `.clio-reconciled/`
+    instead of deleting it. Honors `CLIO_RECONCILE_DRY_RUN=1`.
+  - `Focus5Float`'s `PromptLogReader` now drops `<!--` lines before positional parsing, so the
+    Prompt Log tab tolerates the new ID comments (48 swift tests pass, +7).
+
+### Fixed
+- **CLIO exporter no longer aborts on macOS's bash 3.2.** The new reconciliation loop expanded
+  an empty `conflict_siblings` array under `set -u`, which raises "unbound variable" on bash
+  < 4.4 (macOS `/bin/bash` is 3.2) — the common zero-siblings case, so every normal run failed
+  and produced no output. Caught in post-marathon verification (the `swift build` gate could not
+  exercise the shell path) and fixed with the portable `${arr[@]+…}` guard. Re-verified on
+  `/bin/bash` 3.2: idempotency, state-delete safety, full-block reconciliation, and dry-run.
+
+## [0.62.0] - 2026-07-19
+
+### Changed
+- **CLIO Markdown exporter auto-sync default is now every 1 minute (was 5).** Updated the
+  launchd `StartInterval` in `utils/CLIO/INSTALL.md` (300 → 60) and the live
+  `com.claude.prompt-log-to-md` job on this machine (reloaded; prior plist backed up to
+  `*.plist.bak-300s`). Faster surfacing of new prompts into the shared Obsidian note, at the
+  cost of higher concurrent-write odds — which motivates the durability plan below.
+
+### Added
+- **Plan: durable, idempotent CLIO writes to the shared Obsidian note.** Root-caused CLIO's
+  best-effort merge gap (the per-device line-count cursor is load-bearing for correctness and
+  advances whether or not a write survives sync; no content-level idempotency; no conflict-copy
+  reconciliation) and drafted a 4-phase fix: content-addressed entry IDs, conflict-copy
+  reconciliation, verify-after-write, and a coupled `PromptLogReader` change to skip HTML-comment
+  lines. → `PROJECT/1-INBOX/CLIO-DURABLE-IDEMPOTENT-WRITES.md`
+
+## [0.61.0] - 2026-07-18
+
+### Added
+- Direct branch pushes in watched repositories now retain a durable event
+  receipt, per-commit identity, and exact changed-file records. The bounded
+  enrichment path surfaces non-PR commits in activity, HiQS evidence, and the
+  dashboard while preventing duplicate signals when a matching PR is present.
+
+## [0.60.0] - 2026-07-18
+
+### Fixed
+- **Collector health signal no longer reports a working system as broken.** Months of "the
+  collectors are unstable" traced to the health checks, not the collectors — 6 of 6 findings
+  investigated on 2026-07-18 were misreads, and **zero** were real collector defects. (GH-146)
+  - `scripts/daily_sync.sh` no longer exits 1 when any single sub-source errors. A transient
+    GitHub rate limit was failing an otherwise-successful ~49-minute refresh, which launchd
+    recorded as status 1 and `doctor` then reported hourly — 7 of the last 10 runs ended
+    `finished with errors` this way. A new `classify_sync_outcome()` splits fatal (migrations
+    failure, or every stage failed/skipped) from degraded (exit 0), and the JSON gains
+    `sync_outcome` alongside existing keys.
+  - `doctor`'s launchd check reads the run's structured result instead of asserting a stale
+    `launchctl` exit status as current health; an unknown state now reports as stale rather than
+    as a current failure.
+  - Device-bound checks (`pulse collector:*`, `scheduler:*`) no longer warn on machines they do
+    not describe. Laptops that are legitimately asleep stopped raising alerts on the Mac Studio.
+  - The `deep work` stall check pins "today" to the operator's local day via `tz_utils.local_tz()`
+    instead of UTC. After 17:00 PDT it had been reporting **every** tracked project quiet on a UTC
+    day that was two hours old — same bug class as GH-129's day-boundary tz pin, fixed there and
+    missed here.
+
+### Known gaps (GH-146)
+- `launchd:pulse-server — exited with status -15` still warns. `-15` is SIGTERM from a deliberate
+  restart; the phase brief named this target but no test covered it and it was not fixed.
+- `launchd:daily-sync` now reports honestly ("stale/unknown") but still surfaces as a WARN; whether
+  an unknown state should warn at all is unresolved.
+- Device ownership is hardcoded by device id in `_DEVICE_SCOPE_REGISTRY`; it will drift as machines
+  are added or renamed.
+
+Net effect measured on the same host, same config, same moment: **6 warns → 5**, against a target
+of 0. `daily_sync.sh`'s effect is not observable until the next 06:30 scheduled run.
+
+## [0.59.1] - 2026-07-16
+
+### Fixed
+- `daily-sync` no longer fails with `"database is locked"` when it collides with
+  the hourly `github-sync` job. The github-scope refresh now retries (linear
+  backoff, bounded, never silently swallowed) instead of failing the whole run
+  and cascading into a skipped dashboard note. (GH-131)
+- Focus5Float's telemetry-tab `.md` viewer no longer reads an unbounded file
+  synchronously on the main thread. The read is now capped at 1MB with a
+  byte-safe truncation (never mid-codepoint) and a visible truncation note;
+  files under the cap are unaffected. (GH-121)
+
+## [0.59.0] - 2026-07-16
+
+### Added
+- Shared UTC→local display formatters (`format_local()`, `format_relative()`)
+  in `tz_utils.py`, which already owned local-timezone *resolution* but had no
+  shared *display*-formatting layer. Five independent ad-hoc implementations
+  across `pulse.py`, `next_actions.py`, `daily_report.py`, `note_builder.py`,
+  and `web.py` now share one tested core (behavior-preserving — each keeps its
+  own format string and fallback text).
+
+### Fixed
+- `rebalance semantic-query` printed a bare, unconverted, unlabeled UTC
+  timestamp (`updated: 2026-07-16 15:27:...`). Now shows the converted local
+  time with an explicit label (`Local Time: 2026-07-16 08:27 PDT`).
+
+## [0.58.1] - 2026-07-14
+
+### Fixed
+- Git Pulse daily summary no longer falsely reports "no git activity" on active
+  days. The day-boundary was derived from the ambient timezone, so a scheduled
+  run under UTC (or after local-evening, once UTC has rolled to the next day)
+  filtered out the whole day's commits. The day boundary is now pinned to the
+  machine's real local timezone (or an explicit override) regardless of the
+  runtime environment.
+
+## [0.58.0] - 2026-07-14
+
+### Added
+- Claude Code Cloud web sessions as a work signal: read the day's cloud coding
+  jobs and their status (finished / running / failed), enriched with each head
+  branch's pull-request merge state (merged / open / none). Wired into the
+  ranked next-action pipeline through the collector candidate seam, shipping
+  dormant behind an opt-in flag so the signal is watched via a daily-note data-
+  quality grade before it is allowed to influence the ranked verdict.
+- A daily Obsidian note block grading that signal's data quality — attribution
+  (repo+branch resolved), attestation (per-job summary), outcome coverage, and
+  pull-request linkage — as the observation surface before promotion.
+
+## [0.57.0] - 2026-07-14
+
+### Added
+- **HiQS — all six signals unified into one ranked pipeline** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125), supersedes the remaining scope of #101/#115/#116/#119) — GitHub, the vault, Google Calendar, Slack reminders, email, and design comments now feed a single bundle that produces a single ranked verdict, read by every synthesis surface. Previously two surfaces disagreed — the broad-synthesis path saw no Slack reminders, email, or design comments; the ranked what's-next engine saw no email or design comments — and email and design comments reached no synthesis at all. Each candidate is now Attested: it carries its source, its evidence, and why it was ranked. The design-comment arm ships dormant-and-correct, staying empty until an explicit file-key allow-list turns the opt-in collector on. This is wiring, not new machinery.
+
+### Changed
+- **One ranked verdict, structurally drift-proof** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125)) — the broad-synthesis result now carries the ranked "what to do next" verdict as a first-class field, read from the persisted cache. It never recomputes the ranking, so the default path costs no extra model call. The precise invariant: **no surface computes its own ranking** — there is exactly one ranking in the system, written by the refresh paths and read by everyone — so two surfaces can never show *different* rankings, rather than merely agreeing today. (On a never-ranked database the broad-synthesis surface reports an empty ranking while the dashboard bootstraps the cache: an absence, not a disagreement. It stays that way by design — that surface must never trigger a network synthesis.) The ranked verdict is now **always** returned to agent callers under a top-level key, replacing the previous opt-in side-channel; the synthesis prompt gains a labelled section carrying each action's receipts rather than bare titles.
+- **A source reaches the ranking by registering a collector, not by editing a dispatch chain** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125)) — the hand-written per-source candidate dispatch in the ranker is replaced by a walk over the collector registry, reusing the same registration seam the semantic-document providers already use. Each source now owns its candidate shape at registration time, so adding a seventh work signal touches neither the ranker nor the query layer — pinned by a test that registers a fake source and asserts its rows reach the ranked output with no edit to either. This is the headline of the change and the guiding principle it discharges. The cross-day velocity signal is explicitly **not** folded in: it is a multi-day derived scan, and the provider contract is single-day, so it stays observe-only rather than being bent to fit. The speculative second ingest path for email and calendar is killed as planned, but its handler stubs are **kept** — they are the live dispatch targets of a shipped, tested webhook receiver, which the plan had overlooked.
+
+### Fixed
+- **A contentless email can no longer outrank real work** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125)) — email ranks above open GitHub items, so a message row carrying neither a sender nor a subject would have surfaced at the top of the list as "(no subject) from unknown sender". Such a row has nothing to attest with and is now dropped before ranking. Found by running the new pipeline against real data, which revealed the reason it had not already been hit: **the email collector is landing badly broken rows** — of 124 stored messages, 119 have no sender, no subject, and no timestamp, and are invisible today only because the missing timestamp excludes them from every window. They would all have surfaced the moment that was fixed. The guard is here so this cannot become a signal-quality regression later; the ingest defect that produced the rows is fixed separately, below.
+- **Email push-ingest no longer accepts contentless rows — the root cause of the broken table** — the agent-facing push path (the supported way to keep mail fresh when an agent holds the mail connector) took caller-supplied records and defaulted every missing field to an empty string. A caller whose payload used *different key names* therefore had every unmatched field silently coerced to empty, and the rows were stored anyway: they looked ingested, and were unusable. That is what happened on this device — a single push landed 119 rows, 96% of the whole table, carrying an id, a snippet and labels but no sender, no subject and no timestamp. Nothing reported a problem; the rows sat there for three weeks and were only discovered when the new ranked pipeline went looking for email and found nothing rankable. Such a record is now **rejected at the write boundary** (a message with no sender *and* no subject *and* no timestamp is not a message), the count comes back to the caller as a first-class field, and — because the caller is an agent, not a human reading logs — the tool response also carries an explicit warning naming the expected key names. One real field is enough to be stored; the guard rejects only total emptiness. **Silent coercion at a write boundary is how a source starves without ever reporting unhealthy: freshness only checks whether rows exist, not whether they mean anything.** The already-corrupted rows were purged from the operator's local store as part of the fix — the dead records and their embeddings (which had also been polluting semantic search) are gone, the five real messages are intact, and the store passes an integrity check. Teaching source health to assert row *quality* and not merely row *count* — the reason this hid for three weeks, and a gap that applies to every source, not just email — is tracked separately.
+
+### Notes
+- The consolidation bet recorded in 0.56.1 rested on "124 real email rows feeding nothing". Verification against real data shows only **5** of those rows carry content, the newest received seven weeks earlier. The email arm is therefore correctly wired but **starved**: its payoff is gated on fixing ingest, not on this change. The correction is recorded rather than the original claim quietly restated. The stated net-lines-of-code-at-or-below-zero acceptance criterion was **missed** (+519 net): two planned deletions proved unsafe on inspection, and six sources genuinely needed wiring. Recorded as a failed criterion.
+
+## [0.56.1] - 2026-07-14
+
+### Changed
+- **Four overlapping signal efforts consolidated into one plan: HiQS** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125)) — a review of how the six ingested sources reach a user found the product's core claim was only about two-thirds true. There is no unified pipeline: two independent synthesis surfaces exist and they disagree. The broad-synthesis path sees no Slack reminders, no email, and no design comments; the ranked "what to do next" engine that powers the dashboard sees no email and no design comments. Email and design comments are collected, stored, and embedded — and then reach no synthesis at all, only raw search. On the primary device that is 124 real email rows feeding nothing. The two surfaces share no code, so nothing prevents them from drifting further apart. HiQS ("High Quality Signals") is now the named plan to make all six sources feed one bundle that produces one ranked verdict every surface reads. Four issues were retired into it — the observe-first source-health contract, the alternative-ingest webhook work, the cross-day velocity signal, and the HiQS branding pass — each of which had independently started describing a piece of "the work signal." **All code already shipped under them is kept; only their unfinished scope was absorbed.** The plan's own third phase carries a net-lines-of-code-at-or-below-zero acceptance criterion, so the consolidation has to pay for its own wiring.
+
+  **The bet.** Retiring four active issues into one is reversible (reopen the issues, move the docs back) but not free: it concentrates four independently-gated efforts behind a single plan, so if that plan stalls, four things stall. The call is that the *reason* they were all gated is the same missing piece — nothing combined the signals, so no single one of them could prove its own value in isolation. Expected signal by the close of the plan's first two phases: the ranked list visibly contains email-sourced items, and the two synthesis surfaces return the identical ranking. Revisit trigger: if unifying the bundle does not measurably improve the ranked output, the consolidation was organizational rather than substantive, and the absorbed efforts should be re-split rather than left dormant behind one doc.
+
+  Naming collision resolved along the way: the source-health contract carried `codename: HiQS` in its frontmatter while the branding issue claimed HiQS as a marketing label for the ranked signal. Both are retired; the new plan is the single owner of the name. Docs moved to the superseded bucket; roadmap ledger gained a `Superseded` section so retired work stays visible instead of vanishing.
+
+  **Three design decisions locked against the guiding principles**, whose appendix fixes the priority order as *local-first > signal quality > architectural cleanliness > implementation speed*. That order overruled the smaller diff twice. (1) The broad-synthesis surface will expose the ranking as a real, discoverable field rather than a hidden side-channel attribute — the side channel was the smaller change but fails the "structured" pillar and is a band-aid that the very next phase would tear out. Its pinned return-shape test will be updated to assert the new contract, not preserved to hide the change. (2) Rankings must arrive *attested* — every action carries its source, evidence, and reasoning through to both the synthesis prompt and the UI; a rank with no basis is not a high-quality signal, and this is now an executable test rather than a promise. (3) The per-source dispatch chain in the ranking engine is a standing violation of "extend by addition, not by editing a dispatch chain" — the plan knowingly grows it by two arms in its first phase to prove the signal is real, then collapses all eight into a collector-registered provider that mirrors the semantic-document provider seam already in the orchestrator. Reuse of an existing seam, not a new abstraction; it is also where the net-lines-at-or-below-zero target gets paid for.
+
+### Fixed
+- **PDDA compliance restored on the project-health-axes doc** — it was missing a roadmap ledger pointer (failing `roadmap-coverage`) and its status table used a non-contract header (`Most recently completed phase` instead of the exact `What was just completed`), failing `status-table`. Both pre-dated this iteration and were failing silently because the suite had not been run in blocking mode. Full-mode PDDA now passes clean across the repo.
+
+## [0.56.0] - 2026-07-11
+
+### Added
+- **Commit-threshold auto-promotion of watched repos** ([GH-124](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/124)) — a watched-but-unconfirmed repo now auto-promotes into `project_registry` once the operator (or a known cloud-agent bot acting on their behalf) has authored `auto_promote_commit_threshold` commits to it (default 3, config `auto_promote_enabled`/`auto_promote_commit_threshold`). Reuses the existing `machine_owned` write contract from activity/calendar inference (never overwrites a curated row), reuses `pulse.py`'s existing author-identity filter against `github_commits` rather than inventing a second one, and wires into `_refresh_github()` immediately after the watchlist coverage guard — no new scheduling surface. Forks/starred repos with zero operator commits never promote; the commit-count gate is the fork filter, no separate detection needed. Every promotion surfaces non-silently: a `project_auto_promoted` badge on `/auth-log` and a "New repo added" banner on the pulse dashboard's repo-activity chart. Plan Codex-reviewed to approval via `relay-xyz` (3 rounds) before build. 20 new tests across detection, surfacing, and orchestrator wiring; full suite verified zero-regression against a pre-change baseline; `rebalance doctor` clean.
+
+## [0.55.0] - 2026-07-06
+
+### Added
+- **Cross-day deep-work signal (observe-only)** ([GH-116](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/116)) — a new `rebalance doctor` check flags a project that went quiet after recent activity while it still has open GitHub work, computed by diffing the existing daily pulse snapshot across day boundaries (no re-summarization of the vault's Gemini prose, no new table). Read-only for now — does not change the "what to do next" ranking; folding it in is a gated follow-up. 63 new/updated tests green.
+- **Zapier webhook receiver (Phase 1)** ([GH-115](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115)) — a new authenticated endpoint accepts Zapier-triggered events (HTTP Basic Auth primary, query-param fallback, dry-run support, in-memory rate limiting, a health-check route), routing by source to placeholder handlers. The real email/calendar ingest logic behind those handlers lands in a follow-up phase. 8 new tests green.
+- **Focus 5 off-roster reason — desktop parity** ([GH-104](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/104)) — the macOS Focus5Float app's off-roster strip now shows the same specific reason (uncommitted, unpushed, etc.) per repo that the web view already showed, reusing the existing server-computed reason string rather than re-deriving the logic client-side. Web slice shipped 2026-07-03; this closes the desktop half.
+
+## [0.54.0] - 2026-07-05
+
+### Added
+- **Signal-quality contract Phase 2 — derived status/reason + doctor warning** ([GH-101](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101)) — `get_index_status()` now derives a `status` (`ok`/`warn`/`degraded`) + `reason` per source from staleness and collapsed 7-day volume, merged into the existing `payload["freshness"]` dict alongside the pre-existing semantic-drift keys (never clobbering them). One new `rebalance doctor` warning line prints degraded sources with their reason — read-side only, no ingest gate, no new table. Live-verified: `doctor` correctly flagged `email` (fresh, 0 rows/7d) and `figma` (stale 25d) same day. 33 new/updated tests green.
+- **Capabilities manifest (Phase 2, scope-pinned)** ([GH-106](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/106)) — a static `capabilities/manifest.yaml` + generated read-only `capabilities/INDEX.md` documenting 3 high-risk skill bundles (`relay-xyz`, `xyz`, `consult`) by reference — no dynamic loader/trust engine. Scoped to this repo only; the full cross-repo (Rebalance + XYZ) manifest remains open. 3 tests green; regeneration confirmed idempotent.
+- **Zapier ingest — module split forced for swarm eligibility** ([GH-115](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115)) — a `swarm-preflight` pass found the original single-module design (Phase 2 email + Phase 3 calendar both writing one `zapier_ingest.py`, both wiring into `web.py`) wasn't path-disjoint. Split into `zapier_email.py`/`zapier_calendar.py`, with Phase 1 owning `web.py`'s dispatch exclusively via stub handlers, so Phase 2 and Phase 3 can run as a real concurrent lane. Phase 0 spike also shipped: Gmail/GCal trigger field mapping documented, auth decision landed (HTTP Basic Auth primary, query-param fallback; HMAC deferred pending Zapier Premium header support).
+
+## [0.53.0] - 2026-07-05
+
+### Added
+- **Zapier ingest project created** ([GH-115](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115)) — 5-phase project plan for Zapier webhook ingestion as an alternative to direct Gmail/GCal OAuth. HMAC-authenticated endpoint in `web.py` routes to normalizers in `zapier_ingest.py`; Zapier email reuses the existing `ingest_email_messages()` single-writer path; Zapier calendar gets a new push function in `calendar.py`. Operator config flags (`email_source`, `calendar_source`) keep OAuth the default. Phase 0 spike is next. → `PROJECT/2-WORKING/GH-115-ZAPIER-INGEST.md`
+
+## [0.52.2] - 2026-07-05
+
+### Added
+- **Multi-device Git Pulse daily synthesis to Obsidian vault** ([GH-114](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/114)) — created `utils/git_pulse_daily_synthesis.py` and Claude Code skill `git-pulse-daily-synthesis` to project multi-device git commit logs (via `view.sh --today`) into an idempotent block at the bottom of the Obsidian vault's "0. Today's Notes.md". The synthesis uses Gemini (no Qwen fallback) and includes a late-run guard to prevent colliding with the 00:00 rollover.
+
+## [0.52.1] - 2026-07-04
+
+### Fixed
+- **focus5 Mac app: refresh no longer strands worktrees removed from disk** ([GH-109](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/109), [PR #111](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/111)) — `summarize_focus5` (`src/rebalance/ingest/focus5_scan.py`) gained a `_repo_path_live()` existence check (mirrors `iter_git_repos`'s `.git` predicate), applied on the read path via a `drop_missing_paths=True` default, so a repo whose folder or `.git` no longer exists drops from the roster/off-roster on the next read-only `GET /focus-5.json` fetch — no full ~30s device rescan required. 2 new regression tests in `tests/test_focus5_scan.py` (153 passed pre-merge, 105 in the focus5 file post-merge on `development`); the synthetic-path ranking unit tests opt out via `drop_missing_paths=False`. Visually verified end-to-end in the native Focus5Float app (not just the Python suite): a throwaway git worktree was synced into the live roster, deleted from disk, and confirmed to drop from the running app's panel via its own read-only refresh path.
+- **focus5 repo-name font shrunk ~20%** ([GH-110](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/110), [PR #111](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/111)) — the Mac app's `Theme.display` (`macOS/Apps/Focus5Float/Sources/Focus5Float/Theme.swift`) went 17pt → 14pt, and the HTML `/focus-5` page's `.f5-name` (`src/rebalance/web.py`) went 15px → 12px. Verified visually in a `swift build`/`swift run` of the native app — repo names render clearly legible at the smaller size with no clipping. `/Applications/Focus 5 Float.app` rebuilt and reinstalled via `make-app.sh` so the installed copy carries both fixes.
+
+## [0.52.0] - 2026-07-03
+
+### Added
+- **6 low-risk GSD Core pattern-review adoptions landed** ([GH-106](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/106), follow-on to the closed review [GH-103](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/103)) — all scored low-medium risk / trivial-to-easy reversibility, batched into one pass rather than an XYZ marathon (marathon is serial anyway, and two of the six share `PROJECT/PDDA.md` as a target, which marathon's phase isolation can't safely coordinate): (1) a `Verification summary` phase-close convention plus (4) a named `Discuss` pre-planning step, both in `PROJECT/PDDA.md` → "Named phase-loop steps"; (2) a corrected read-before-edit hook port — gsd-core's own `gsd-read-guard.js` explicitly self-disables on Claude Code ("Claude Code natively enforces read-before-edit"), so the actual gap was a leaf-ingest bypass nudge instead: `utils/pdda/pdda-leaf-ingest-guard.py`, an advisory (never-blocking) `PreToolUse` hook wired in `.claude/settings.json`, firing only on inline-Python `rebalance.ingest` calls that bypass `register_collector`/`refresh_index`; (3) a subagent/`consult` hand-back contract (`PROJECT/PDDA.md` → "Subagent & consult hand-back contract"); (5)+(6) a new `SKILLS-INVENTORY.md` — a hand-maintained (not dynamically generated, per a real YAGNI objection raised during cross-model review) skill/command/hook ownership map + discoverability index. `doctor` clean, `pytest tests/` 1264 passed / 10 skipped, `pdda.sh run` clean. The 7th, higher-effort adoption (a narrow `capabilities/`-style manifest) stays queued as GH-106 Phase 2.
+
+## [0.51.4] - 2026-07-02
+
+### Added
+- **XYZ ⇄ Rebalance integration project captured** (`PROJECT/1-INBOX/GH-102-XYZ-REBALANCE-INTEGRATION.md`, GH-[#102](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/102)) — formalized the outcome of a "dueling Claudes" brainstorm (`relay-system/2026-07-02/xyz-rebalance-integration.md`, `claude-xyz` ⇄ `claude-reb`, 4 rounds, closed) into PDDA intake: a Top-3 integration-seams contract (build order #2→#1→#3) between the XYZ agent-swarm harness and Rebalance — (#1) an `xyz` collector feeding marathon/session `XYZ.json` into the signal plane via `register_collector` (`index_ops.py:95`) + GH-101 health fields, (#2) a pinned harness release channel (`xyz-sync check` over `registry.tsv` `source_commit`/`tick_version`), (#3) the return path seeding cross-repo tick lanes via `roadmap_signals` (Phase-2, gated behind #1). Parked in `ROADMAP.md`; depends on GH-101. Planning/intake only — no product code.
+
+### Fixed
+- **Relay pointer format deadlocked the duel poll parser** (`relay-system/2026-07-02/xyz-rebalance-integration.md`) — the scaffolded thread wrote `**NEXT: claude-reb**` (bold wrapping the whole line), but `.xyz/relay-automation/poll.sh`'s `relay_next_agent` (`poll.sh:156`) only tolerates bold on the key (`**NEXT:** value`), so it parsed `claude-reb**`, misclassified the seat as a non-Claude agent, and returned `nudge-cross-model` — stalling turn 1. Normalized both `STATUS:`/`NEXT:` lines to `**KEY:** value`. (Upstream hardening — make `poll.sh` strip trailing markdown — captured as XYZ-maintainer feedback, not fixed here.)
+
+## [0.51.3] - 2026-07-01
+
+### Fixed
+- **Client gap-fill prompt silently dropped the calendar signal when a GitHub signal was also present** (`src/rebalance/ingest/project_inference.py`) — `_project_activity_snippets()` capped its return to `snippets[:2]`, but a project with both repo activity (2 lines: `Repos:` + GitHub activity) and calendar activity (1 line) produces 3 candidate lines, so the calendar line was truncated away before ever reaching the Gemini gap-fill prompt. Found reviewing the PR #100 merge (`test_client_gapfill.py::test_gapfill_prompt_includes_recent_signals` was failing on `development`, uncaught because it wasn't in that PR's test plan). Removed the cap — all built snippets (max 3) now reach the prompt. `pytest tests/` 1258/1258 green.
+- **Unified refresh QA-R remediation** (`scripts/pulse_server.py`, `scripts/pulse_web.py`, `scripts/apple_reminders_helper_app.swift`, [PR #100](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/100)) — closed all 7 findings from the v1 QA review: a failed EventKit helper call now returns `ok: false` and the dashboard shows a "⚠ Reminders stale" badge instead of silently serving stale data (last-good `active.json` preserved); DB-less rendering on cold start is now an explicit documented design choice instead of an unstated regression; the `active.json` path is a single shared `ACTIVE_JSON_PATH` constant instead of two hardcoded literals; the on-disk contract is a versioned envelope (`{"schema_version": 1, "items": [...]}`) with a backward-compat reader for the old bare-list shape; the Swift helper's `semaphore.wait()` is now bounded to 4.5s with a typed timeout instead of hanging indefinitely. 8 new tests in `tests/test_unified_refresh_remediation.py`. agy-reviewed, Approved. → `PROJECT/2-WORKING/UNIFIED-REFRESH-RESTART.md`
+- **Focus5Probe no longer aborts when launched without usable stdio** (`macOS/Apps/Focus5Native/Sources/Focus5Probe/main.swift`) — the sandbox harness's `line(_:)` helper used Foundation's `print`, which routes through `NSConcreteFileHandle` and can raise an Objective-C exception if the probe is launched from an app/sandbox context with closed or invalid stdout/stderr. Replaced that path with direct `Darwin.write` calls plus `SIGPIPE` ignore/fallback-to-stderr behavior, so detached launches now exit cleanly instead of crashing before the git probes run. Validated with a detached subprocess launch (`stdout=DEVNULL`, `stderr=DEVNULL`) and a normal foreground run; both exit `0`.
+
+### Changed
+- **Client auto-discovery Phase 2 closed at v1 by kill-check** (`src/rebalance/ingest/project_inference.py`, [PR #100](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/100)) — the Gemini gap-fill for `None`-client projects (batched call, fail-soft) shipped code-complete, but measuring owner-as-client coverage against the live repo-local registry found 15/15 active projects (100%) already labeled, so the ≥90% kill switch fired: Gemini gap-fill ships dormant with no live rows to exercise it, activating automatically only if a calendar-only or personal-account project appears. No interface changes to `registry.py`/`next_actions.py`. → `PROJECT/2-WORKING/CLIENT-AUTO-DISCOVERY.md`
+
+## [0.51.2] - 2026-06-30
+
+### Fixed
+- **git-pulse collector now stages the PDDA registry projection** (`experimental/git-pulse/collect.sh`, GH-[#96](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/96)) — the collector staged `pulse-<device>.md` and `devices/<device>.yaml` but not the `pdda/registry-<device>.tsv` projection that PDDA's `install.sh` writes into the sync repo, so on PDDA-installed devices it sat as untracked dirt and never committed/pushed. Added a guarded `append_stage_path "pdda/registry-$device_id.tsv"` before `git add` (scoped to the single per-device file; the `[ -f ]` guard keeps it a no-op on devices without PDDA). This is the sync-side half of the multi-device PDDA rollup; the write-side path-autodetection fix was `Hypercart-Dev-Tools/pdda#7`. Verified by a new `tests/test_git_pulse_collect_cli.py` case (projection is staged when present) → 5/5 in that file; `bash -n` clean; `rebalance doctor` clean; `pdda.sh run` clean. -> `PROJECT/3-COMPLETED/GH-96-GITPULSE-STAGE-PDDA-PROJECTION.md`
+
+## [0.51.1] - 2026-06-30
+
+### Changed
+- **Apple Reminders dashboard complete is now truly optimistic** (`scripts/pulse_web.py`) — the row checks + collapses immediately on click and the write runs in the background, instead of freezing the row until the server responds. The server-side write can wait on the `rebalance.db` write lock during a concurrent sync (`busy_timeout=30s`); only a real failure now rolls the row back. The EventKit op itself is ~1s; the lag was the audit-row `INSERT` contending with syncs, not the reminder write.
+
+## [0.51.0] - 2026-06-30
+
+Made the pulse "Today" dashboard Apple Reminders column actionable (Apple Reminders Unified Plan, Phase 6 dashboard write-back v1).
+
+### Added
+- **Dashboard "complete" for Apple Reminders** — a per-reminder check in the pulse "Today" column now completes the reminder via `POST /api/apple-reminders/complete` (`scripts/pulse_server.py`). The write routes through the existing Phase 5.1 orchestrator (`apply_reminder_writes` → signed helper), so the single-writer + audit-table discipline is preserved and the web layer holds no EventKit/SQLite write of its own. `create`/`delete` stay CLI-only.
+- **Regression tests** — `tests/test_pulse_server_apple_reminders.py` (5 tests): the endpoint builds exactly one `complete` op in `apply` mode, missing id → 400, helper/auth failure → 502, per-op error → 502 (the row never falsely shows "done"), and a static guard that the web layer contains no direct EventKit/SQLite write.
+
+### Changed
+- **Apple Reminders column UX** (`scripts/pulse_web.py`) — rows now render a clickable complete check carrying `data-reminder-id`; on success the row greys out optimistically (the local table reconciles on the next scoped sync, since the loopback server has no Full Disk Access). The "read-only" empty-state copy was dropped. A row without a `reminder_id` degrades to read-only.
+
+## [0.50.1] - 2026-06-30
+
+Fixed the Focus 5 macOS app assuming `rebalance serve` on port 8787 was the only valid local backend.
+
+### Fixed
+- **Dual-port local fallback** — when `FOCUS5_BASE_URL` is unset, the Focus 5 macOS client now probes `http://localhost:8787` first and then the mirrored pulse server on `http://127.0.0.1:8767` for the Focus 5 JSON/note/goals routes, instead of failing outright on the first dead port.
+- **Misleading offline copy** — the app's offline message and README now describe both supported local server paths so an always-on pulse-server setup does not look broken when `rebalance serve` is down.
+
+## [0.50.0] - 2026-06-30
+
+Added Obsidian-backed reminders to the Focus 5 macOS app and made their failure states diagnosable instead of collapsing into a generic load error.
+
+### Added
+- **Obsidian Reminders block in Focus 5 Float** — the macOS app now shows a second reminders section under Apple Reminders, sourced from the first 8 open checkbox items in the vault-root `0. Goals.md`, with checkbox-complete write-back that flips only the exact matched markdown line.
+- **Shared goals-file runtime** — `0. Goals.md` parsing and checkbox mutation now live in one shared helper used by both the pulse flow and Focus 5, including line-index-aware completion fallback and atomic tmp-file replace.
+- **Local Focus 5 goals routes** — `GET /focus-5/goals` and `POST /api/focus5/goals/complete` expose the Obsidian reminders read + partial-write path to the native app through the same localhost contract pattern already used by the Focus 5 note drawer.
+
+### Changed
+- **Apple reminders labeling and cap** — the native app now labels the EventKit block explicitly as Apple Reminders and caps both Apple and Obsidian reminder lists at 8 rows for a consistent drawer height.
+
+### Fixed
+- **Opaque Obsidian-reminders errors** — the native client now distinguishes transport, HTTP, and decode failures for `/focus-5/goals`, so server-down, route-missing, and malformed-response failures surface different messages instead of the generic "Couldn't load Obsidian reminders."
+- **Missing-vault/file observability** — the server goals payload now carries explicit `reason` / `message` metadata for `vault_not_configured`, `file_missing`, and `read_failed`, letting the app explain exactly why `0. Goals.md` is unavailable.
+
+## [0.49.1] - 2026-06-30
+
+Fixed the "what to do next" list collapsing to ~2 items right after 0.49.0 shipped.
+
+### Fixed
+- **Reasoning-model truncation** — `gemini-2.5-flash` is a thinking model; on the ranking prompt it spent ~1962 of its 2048-token budget on hidden reasoning and hit `finishReason=MAX_TOKENS` after emitting only ~2 list items (24 candidates went in). `_synthesize_gemini` / `_synthesize_with_fallback` now accept a `thinking_budget`, and the next-actions ranking call passes `thinking_budget=0` to disable reasoning so the whole budget goes to the answer (the full ~15-item list). `ask()` is unchanged (default `None`). Covered by `tests/test_querier_gemini_parse.py::TestThinkingBudget` + `tests/test_next_actions.py`.
+- **Self-reference feedback loop** — the generated `Dashboards/What To Do Next.md` was itself picked up as a "recent vault edit" and ranked in its own list every refresh. `_operator_candidates` now skips rebalance's own generated next-actions file (`_is_generated_next_actions_file`).
+
+## [0.49.0] - 2026-06-29
+
+Made the daily "what to do next" genuinely Gemini-synthesized (paid key file) and published it to a fixed Obsidian vault file. Root cause of the prior placeholder titles: the default Gemini model had been retired, silently forcing every synthesis onto the local Qwen fallback.
+
+### Added
+- **Paid-key file resolver** in `get_gemini_api_key()` (`src/rebalance/ingest/config.py`): a new resolution step reads the key from a file — path from `GEMINI_API_KEY_FILE` env → `gemini_key_file` config → default `~/secrets/gemini-paid-key.txt` — after env vars and before the gcloud fallback. `_pick_api_key` extracts the `AIza…` key from a multi-line file (e.g. a project-id line + key line). The file lives outside the repo by design; the key is read in-memory and never logged. Covered by `tests/test_gemini_key_resolution.py`.
+- **Vault render sink** in `src/rebalance/ingest/next_actions.py`: `render_next_actions_markdown()` + `write_next_actions_to_vault()` write the SAME ranked output to the fixed file `Dashboards/What To Do Next.md` (single-writer generated banner), wired into the `refresh_index` precompute hook (gated on `update_dashboard_note` + a resolved vault, reusing the resolved path). Covered by `tests/test_next_actions.py::TestVaultRender` and `tests/test_next_actions_precompute.py`.
+
+### Fixed
+- **Retired Gemini model** — `DEFAULT_GEMINI_MODEL` was `gemini-2.0-flash`, which Google now 404s as "no longer available", silently forcing every synthesis onto the local Qwen-0.6B fallback (the source of the `<rank>. <title>` placeholder titles). Standardized on `gemini-2.5-flash` (already used by `note_builder.py`/`cli/dashboard.py`); the ranking synthesis call gets 2048-token headroom so a reasoning model isn't truncated to a no-text response.
+- **Placeholder-echo hardening** — `_parse_ranked_synthesis` now drops a line whose title is an unfilled `<rank>`/`<title>` template token and ignores `<…>` field values, so a weak fallback model can never surface the format spec as a real action (the deterministic ranking survives instead).
+- Made `tests/test_repair_fsm.py` hermetic — its `_make_fsm` helper no longer resolves an ambient machine key, so the "no API key" path is tested deterministically regardless of local key files.
 
 ## [0.48.0] - 2026-06-26
 
@@ -943,14 +1879,14 @@ P2 Phase 1 — team-calendar signal — plus a max-effort code-review hardening 
 
 ### Changed
 
-- **Operator-breaking**: the ask-self wrappers ([scripts/ask-self-ingest.sh](scripts/ask-self-ingest.sh), [scripts/ask-self-query.sh](scripts/ask-self-query.sh)) now require `ASK_SELF_PATH` to be set in the environment and fail with an actionable error message when it isn't. Previously they fell back to a hardcoded `/Users/noelsaw/...` path that didn't exist on any other operator's machine — a missing env var manifested as a confusing "ask-self repo not found at <someone-else's-path>". Add `export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"` (adjust to your checkout) to your shell rc to keep using these wrappers.
+- **Operator-breaking**: the ask-self wrappers ([scripts/ask-self-ingest.sh](scripts/ask-self-ingest.sh), [scripts/ask-self-query.sh](scripts/ask-self-query.sh)) now require `ASK_SELF_PATH` to be set in the environment and fail with an actionable error message when it isn't. Previously they fell back to a hardcoded absolute path from the original author's machine that didn't exist on any other operator's machine — a missing env var manifested as a confusing "ask-self repo not found at <someone-else's-path>". Add `export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"` (adjust to your checkout) to your shell rc to keep using these wrappers.
 
 ### Fixed
 
 - The launchd installers no longer ship with one developer's home directory baked in. All five sync shell scripts (`daily_sync.sh`, `vault_sync.sh`, `pulse_sync.sh`, `pulse_web_sync.sh`, `github_sync.sh`) now derive `REBALANCE_DIR` from their own location, and their five plists became `.plist.template` files with a `{{REBALANCE_DIR}}` placeholder that each `install_*_scheduler.sh` substitutes with the local checkout path before writing into `~/Library/LaunchAgents/`. The rendered plists are gitignored, so a fresh clone on any machine installs cleanly with no per-user editing.
 - The author-fallback in `PROJECT/cleanup.sh` no longer hardcodes a single operator's username — it falls back to `os.environ.get('USER', 'unknown')` when neither the existing frontmatter nor git provides an author.
 - The `Degraded Mac` test fixture in [tests/test_git_pulse_health_check.py](tests/test_git_pulse_health_check.py) no longer embeds a real operator path in its `scan_failure_examples` example; it uses a generic `/Users/operator/...` placeholder instead.
-- The project's `.claude/settings.json` permission allowlist had a few stale `Bash(...)` entries pointing at paths from another machine (`/Users/noelsaw/Documents/GitHub-Repos/...` and `/Users/noelsaw/Documents/rebalance-OS/...`) along with a corresponding `additionalDirectories` entry — all removed since they were dead-ends on this checkout.
+- The project's `.claude/settings.json` permission allowlist had a few stale `Bash(...)` entries pointing at paths from another machine (two absolute checkout paths under a different operator's home directory) along with a corresponding `additionalDirectories` entry — all removed since they were dead-ends on this checkout.
 
 ### Action required on existing machines
 
@@ -1071,7 +2007,7 @@ No DB or vault migration is required — only the install paths above change beh
 
 ### Added
 
-- Centralized path resolution via new module `src/rebalance/paths.py`. Single source of truth for "where is the database?" and "where are the secrets?". Layered resolver chain: (1) explicit `--database` flag, (2) `REBALANCE_DB` env var, (3) walk up from cwd for a project marker (`.git` / `pyproject.toml`) and look for `rebalance.db` next to it, (4) `database_path` field in `~/.config/rebalance-os/config.json`. When no layer resolves, raises `DatabaseNotFoundError` whose message names every candidate it tried and the four routes to fix it. Same chain for secrets: `REBALANCE_SECRETS_DIR` env var → `secrets_dir` user-config field → `~/secrets/` legacy default. Migrates the previously-hardcoded operator paths (`/Users/noelsaw/secrets/google-calendar.env`, `/Users/noelsaw/secrets/sleuth-web-api-development.env`) onto the resolver, closing the AGENTS.md portability TODO. All 24 `Path("rebalance.db"), envvar="REBALANCE_DB"` defaults across the CLI plus the MCP server's `main()` now route through the resolver. New CLI subcommands `rebalance config set-default-database <path>`, `rebalance config set-secrets-dir <path>`, and `rebalance config show-defaults` (debug helper that prints what every layer of the resolver currently sees).
+- Centralized path resolution via new module `src/rebalance/paths.py`. Single source of truth for "where is the database?" and "where are the secrets?". Layered resolver chain: (1) explicit `--database` flag, (2) `REBALANCE_DB` env var, (3) walk up from cwd for a project marker (`.git` / `pyproject.toml`) and look for `rebalance.db` next to it, (4) `database_path` field in `~/.config/rebalance-os/config.json`. When no layer resolves, raises `DatabaseNotFoundError` whose message names every candidate it tried and the four routes to fix it. Same chain for secrets: `REBALANCE_SECRETS_DIR` env var → `secrets_dir` user-config field → `~/secrets/` legacy default. Migrates the previously-hardcoded operator paths (`~/secrets/google-calendar.env`, `~/secrets/sleuth-web-api-development.env`, formerly absolute paths under a specific operator's home directory) onto the resolver, closing the AGENTS.md portability TODO. All 24 `Path("rebalance.db"), envvar="REBALANCE_DB"` defaults across the CLI plus the MCP server's `main()` now route through the resolver. New CLI subcommands `rebalance config set-default-database <path>`, `rebalance config set-secrets-dir <path>`, and `rebalance config show-defaults` (debug helper that prints what every layer of the resolver currently sees).
 - 30-minute web pulse refresh. New launchd job `com.rebalance-os.pulse-web-sync` runs `scripts/pulse_web_sync.sh` every 30 minutes from 06:00 to 23:30, regenerating `web/pulse.html` from the same SQLite the TUI reads. The page itself uses `<meta refresh content="30">` so any browser tab pointed at `file://` reloads on a cadence; pair the two and the local mirror stays within ~30 min of the SQLite truth. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the hourly markdown→private-repo pulse-sync job. Install with `bash scripts/install_pulse_web_scheduler.sh`.
 - Repository hygiene audit (`scripts/audit_modules.py`). Verifies that ingest collectors and render modules are documented in ARCHITECTURE.md + CHANGELOG.md, and that recent commits' file changes appear in the latest CHANGELOG version section. Three checks: ARCHITECTURE.md mention, CHANGELOG.md historical mention, and recent-commit coverage (last N commits since the live version's date, default 20). A baseline lockfile (`scripts/audit_modules.lock`) silences pre-existing gaps so the audit fails only on NEW drift; `--init` re-snapshots the baseline after a deliberate doc backfill. `--include-uncommitted` adds a pre-commit preview that flags working-tree changes (modified/untracked audit-worthy `.py`/`.sh`/`.plist` files) not yet in the latest CHANGELOG section. `--json` emits a stable schema (`audit_version: 1`) with `passed`, `summary`, structured `checks`, and an actionable `next_steps` array suitable for orchestrating agents.
 - `audit_modules` MCP tool (registered in `src/rebalance/mcp_server.py`). Wraps `scripts/audit_modules.py --json` for host agents (Claude Code / Claude Desktop). Parameters mirror the CLI: `init`, `commits_window`, `include_uncommitted`. Returns the same stable JSON schema as the CLI, with subprocess-launch errors surfaced as `passed: False, exit_code: 2` and diagnostic fields rather than raised exceptions.

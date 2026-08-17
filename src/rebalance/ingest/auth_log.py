@@ -301,6 +301,51 @@ def log_job_failed(job: str, exit_code: int, elapsed: float | None = None) -> No
 
 
 # ---------------------------------------------------------------------------
+# Watch-list coverage guard
+# ---------------------------------------------------------------------------
+
+def log_watched_repos_reduced(
+    removed: list[dict[str, Any]],
+    *,
+    info_churn: list[str] | None = None,
+) -> None:
+    """A monitored repo dropped out of the watched set with durable-intent
+    coverage (project/external) — a concerning, possibly-silent reduction.
+
+    *removed* is a list of ``{"repo", "last_buckets"}``; *info_churn* lists repos
+    that also dropped but were rolling-window-only (expected aging-out, carried as
+    context, not alarmed). Emitted by ``watchlist_guard.snapshot_and_detect``.
+    """
+    _append("github", "watched_repos_reduced", {
+        "removed": removed,
+        "info_churn": info_churn or [],
+    })
+
+
+# ---------------------------------------------------------------------------
+# GH-124: commit-threshold auto-promotion
+# ---------------------------------------------------------------------------
+
+def log_project_auto_promoted(
+    repo_full_name: str,
+    *,
+    project_name: str,
+    commit_count: int,
+    threshold: int,
+) -> None:
+    """A watched repo crossed the commit threshold and auto-promoted into
+    ``project_registry`` as a machine-owned row. Emitted by
+    ``project_inference.sync_commit_threshold_promotions``.
+    """
+    _append("registry", "project_auto_promoted", {
+        "repo": repo_full_name,
+        "project_name": project_name,
+        "commit_count": commit_count,
+        "threshold": threshold,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Readers
 # ---------------------------------------------------------------------------
 

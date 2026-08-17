@@ -1,0 +1,75 @@
+# 3-Eyes command allowlist (GH-195) — TOML, parsed by stdlib tomllib.
+#
+# The ONLY commands a 3-Eyes job may execute. A job whose `command` is not a key
+# here is a hard validation error — there is no free-form command execution
+# anywhere in 3-Eyes. Adding an entry here is one of the two irreversible edges
+# that stay with the operator (the other is shipping/pushing); a machine never
+# adds a command to this file.
+#
+# Each entry: exec (the binary) + args (fixed argument list) + description.
+# Relative exec/args resolve against the repo root (the launchd WorkingDirectory).
+
+[commands.noop-selfcheck]
+exec = "/bin/echo"
+args = ["3eyes", "selfcheck", "ok"]
+description = "Always-safe no-op used to prove the guarded run loop end-to-end."
+
+[commands.collector-health]
+exec = ".venv/bin/python"
+args = ["scripts/health_issue_reporter.py", "--warn"]
+description = "Rebalance collector-health check (GitHub/Slack/Gmail/GCal/Zapier ingest freshness)."
+
+[commands.daily-digest]
+exec = ".venv/bin/python"
+args = ["-m", "three_eyes.digest"]
+description = "Rank the day's fleet state (launchd exits, breakers, findings, log tails) via the local model."
+
+[commands.collector-observe]
+exec = ".venv/bin/python"
+args = ["-m", "three_eyes.observe"]
+description = "Parse daily_sync telemetry (sync_outcome, not exit code) and emit a finding when collectors degrade."
+
+[commands.daily-sync]
+exec = "scripts/daily_sync.sh"
+args = []
+description = "Incumbent Rebalance daily index sync, executed from the repository root."
+
+[commands.github-sync]
+exec = "scripts/github_sync.sh"
+args = []
+description = "Incumbent Rebalance GitHub sync, executed from the repository root."
+
+[commands.vault-sync]
+exec = "scripts/vault_sync.sh"
+args = []
+description = "Incumbent Rebalance vault sync, executed from the repository root."
+
+[commands.pulse-sync]
+exec = "scripts/pulse_sync.sh"
+args = []
+description = "Incumbent Rebalance pulse publisher, executed from the repository root."
+
+[commands.pulse-web-sync]
+exec = "scripts/pulse_web_sync.sh"
+args = []
+description = "Incumbent Rebalance local pulse web-mirror refresh."
+
+[commands.pulse-warning-watch]
+exec = ".venv/bin/python"
+args = ["scripts/pulse_warning_watch.py", "--url", "http://127.0.0.1:8767/", "--log", "temp/pulse-warning-watch.jsonl", "--state", "temp/pulse-warning-watch.state.json"]
+description = "Incumbent Rebalance local pulse health-banner watcher."
+
+[commands.obsidian-daily-sync]
+exec = "utils/obsidian_daily_sync.sh"
+args = []
+description = "Incumbent Rebalance daily Obsidian activity-summary wrapper."
+
+[commands.obsidian-rollover]
+exec = "utils/obsidian_rollover.sh"
+args = []
+description = "Incumbent Rebalance daily Obsidian notes-rollover wrapper."
+
+[commands.stickies2obsidian]
+exec = "/bin/bash"
+args = ["utils/stickies-to-obsidian/stickies2obsidian.sh"]
+description = "In-repo Stickies-to-Obsidian importer."

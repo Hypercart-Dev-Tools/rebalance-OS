@@ -21,7 +21,6 @@ from typing import Any
 
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
-from rebalance.ingest.embedder import query_similar
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +43,7 @@ class QueryResult:
     vault_activity: list[dict[str, Any]] = field(default_factory=list)   # recently modified notes
     calendar_context: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # upcoming + recent events
     temporal_context: dict[str, Any] = field(default_factory=dict)  # today/tomorrow day type
+    hiqs: dict[str, Any] = field(default_factory=dict)  # the persisted HiQS ranked verdict (RankedNextActions.as_dict())
     model_used: str = ""
     elapsed_seconds: float = 0.0
 
@@ -52,18 +52,6 @@ class QueryResult:
 # Context gathering
 # ---------------------------------------------------------------------------
 
-
-def _gather_vault_context(
-    database_path: Path,
-    query: str,
-    top_k: int = 8,
-) -> list[dict[str, Any]]:
-    """Semantic search over embedded vault chunks."""
-    try:
-        return query_similar(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception as e:
-        logger.warning("vault context unavailable: %s", e)
-        return []
 
 
 def _local_now() -> datetime:
@@ -131,6 +119,27 @@ def _gather_temporal_context(
     }
 
 
+def _gather_hiqs_context(database_path: Path) -> Any:
+    """Read the PERSISTED HiQS ranked verdict — a cheap cached read (D3).
+
+    Reads ``next_actions.load_ranked_next_actions`` ONLY; it MUST NOT call
+    ``rank_next_actions`` (which recomputes and can hit Gemini). The dashboard
+    route is the single writer of that cache; ``ask()`` is a reader, so the two
+    surfaces cannot drift. A never-ranked / empty DB (``None``) or any read
+    failure degrades to an empty ranking — ``ask()`` never raises over HiQS.
+    """
+    from rebalance.ingest.next_actions import (
+        RankedNextActions,
+        load_ranked_next_actions,
+    )
+    try:
+        ranked = load_ranked_next_actions(database_path)
+    except Exception as e:  # noqa: BLE001 — HiQS context must never break ask()
+        logger.warning("HiQS context unavailable: %s", e)
+        ranked = None
+    return ranked if ranked is not None else RankedNextActions()
+
+
 def _gather_vault_activity(
     database_path: Path,
     since_days: int = 7,
@@ -196,20 +205,6 @@ def _gather_github_context(
         return []
 
 
-def _gather_github_semantic_context(
-    database_path: Path,
-    query: str,
-    top_k: int = 6,
-) -> list[dict[str, Any]]:
-    """Semantic search over synced GitHub issues, PRs, comments, and commits."""
-    try:
-        from rebalance.ingest.github_knowledge import query_github_documents
-
-        return query_github_documents(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception as e:
-        logger.warning("github semantic context unavailable: %s", e)
-        return []
-
 
 def _gather_project_context(database_path: Path) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
     """Project registry entries + repos map."""
@@ -236,9 +231,26 @@ def _build_prompt(
     vault_activity: list[dict[str, Any]],
     calendar_context: dict[str, list[dict[str, Any]]] | None = None,
     temporal_context: dict[str, Any] | None = None,
+    hiqs: dict[str, Any] | None = None,
 ) -> str:
     """Assemble a prompt for the local LLM with all gathered context."""
     sections = []
+
+    # HiQS — the single ranked verdict every surface reads. Rendered with each
+    # action's receipts (source/evidence/why), not bare titles, so the LLM can
+    # ground its answer in the same attested ranking the /whats-next page shows.
+    if hiqs and hiqs.get("ranked"):
+        lines = ["## HiQS — ranked next actions"]
+        for a in hiqs["ranked"][:10]:
+            src = a.get("source") or "?"
+            proj = f" {{{a['project']}}}" if a.get("project") else ""
+            ev = "; ".join(e for e in (a.get("evidence") or []) if e)
+            ev_part = f" — evidence: {ev}" if ev else ""
+            why = f" — {a['why']}" if a.get("why") else ""
+            lines.append(
+                f"{a.get('rank', '?')}. ({src}){proj} {a.get('title', '')}{why}{ev_part}"
+            )
+        sections.append("\n".join(lines))
 
     # Temporal context — always first so the LLM knows what kind of day it is
     if temporal_context:
@@ -279,11 +291,15 @@ def _build_prompt(
     if github_semantic_context:
         lines = ["## Relevant GitHub Artifacts"]
         for item in github_semantic_context[:5]:
-            meta = f"{item['repo_full_name']} {item['source_type']} #{item['source_number']}"
-            if item.get("state"):
-                meta += f" ({item['state']})"
-            if item.get("milestone_title"):
-                meta += f" milestone={item['milestone_title']}"
+            md = item.get("metadata") or {}
+            meta = (
+                f"{md.get('repo_full_name', '')} {md.get('item_type', '')} "
+                f"#{md.get('source_number', '')}"
+            )
+            if md.get("state"):
+                meta += f" ({md['state']})"
+            if md.get("milestone_title"):
+                meta += f" milestone={md['milestone_title']}"
             lines.append(f"### {meta}")
             lines.append(item.get("title", ""))
             lines.append(item.get("body_preview", "")[:320])
@@ -319,7 +335,8 @@ def _build_prompt(
     if vault_context:
         lines = ["## Relevant Vault Notes"]
         for r in vault_context[:5]:  # top 5 to keep prompt manageable
-            heading = f" > {r['heading']}" if r.get("heading") else ""
+            md = r.get("metadata") or {}
+            heading = f" > {md['heading']}" if md.get("heading") else ""
             lines.append(f"### {r['title']}{heading}")
             lines.append(r.get("body_preview", "")[:300])
             lines.append("")
@@ -345,7 +362,11 @@ Answer:"""
 _GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+# gemini-2.0-flash was retired by Google (the endpoint now 404s "no longer
+# available"), which silently forced every synthesis onto the local Qwen
+# fallback. Standardized on gemini-3.5-flash — current, and already the model
+# note_builder.py / cli/dashboard.py use.
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 
 _cached_chat_model = None
 _cached_chat_tokenizer = None
@@ -357,19 +378,30 @@ def _synthesize_gemini(
     api_key: str,
     model: str = DEFAULT_GEMINI_MODEL,
     max_tokens: int = 1024,
+    thinking_budget: int | None = None,
 ) -> str:
     """Synthesize via Gemini REST API.
 
     The API key is passed in-memory and is never logged or written to disk.
     Uses the same REST pattern as repair.py so we don't pull in extra deps.
+
+    ``thinking_budget`` (Gemini 2.5+): when set, caps the model's hidden
+    reasoning tokens. Pass ``0`` to DISABLE thinking for tasks that emit a long
+    structured answer — a reasoning model otherwise spends most of
+    ``max_tokens`` on thinking and truncates the answer at finishReason=
+    MAX_TOKENS (e.g. the next-actions list collapsing to ~2 items). Left as
+    ``None`` (model default) for free-form answers where reasoning helps.
     """
     import json as _json
     import urllib.request
 
     url = _GEMINI_ENDPOINT.format(model=model) + f"?key={api_key}"
+    gen_config: dict[str, Any] = {"maxOutputTokens": max_tokens}
+    if thinking_budget is not None:
+        gen_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
     body = _json.dumps({
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens},
+        "generationConfig": gen_config,
     }).encode()
     req = urllib.request.Request(
         url, data=body,
@@ -410,6 +442,7 @@ def _synthesize_with_fallback(
     *,
     chat_model: str = DEFAULT_CHAT_MODEL,
     max_tokens: int = 1024,
+    thinking_budget: int | None = None,
 ) -> tuple[str, str]:
     """Synthesize via the Gemini -> local Qwen ladder.
 
@@ -417,6 +450,10 @@ def _synthesize_with_fallback(
     logs and falls back to the local Qwen model. On a second failure, emits a
     dual-failure warning and returns a sentinel. When no Gemini key is present,
     goes straight to Qwen.
+
+    ``thinking_budget`` is forwarded to Gemini (pass ``0`` to disable reasoning
+    for long structured outputs — see :func:`_synthesize_gemini`); it does not
+    affect the local Qwen fallback.
 
     Returns ``(synthesis_text, model_used)`` where model_used is the Gemini
     model id, the Qwen model id (optionally annotated), or a "(failed)" marker.
@@ -426,7 +463,10 @@ def _synthesize_with_fallback(
     gemini_key = get_gemini_api_key()
     if gemini_key:
         try:
-            synthesis = _synthesize_gemini(prompt, api_key=gemini_key, max_tokens=max_tokens)
+            synthesis = _synthesize_gemini(
+                prompt, api_key=gemini_key, max_tokens=max_tokens,
+                thinking_budget=thinking_budget,
+            )
             return synthesis, DEFAULT_GEMINI_MODEL
         except Exception as e:
             logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)
@@ -474,15 +514,6 @@ def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: i
 # ---------------------------------------------------------------------------
 
 
-# Sidecar attribute name under which a team=True ask() stashes the ranked
-# "what should we work on next" output. It is a DYNAMIC attribute on the returned
-# QueryResult instance — deliberately NOT a dataclass field — so the pinned
-# QueryResult field/dict contract (test_querier EXPECTED_KEYS, retrieval.py's
-# flatten) stays byte-identical for the default operator flow. The MCP layer
-# reads it via getattr(result, NEXT_ACTIONS_ATTR, None).
-NEXT_ACTIONS_ATTR = "_next_actions"
-
-
 def ask(
     query: str,
     database_path: Path,
@@ -491,13 +522,18 @@ def ask(
     since_days: int = 7,
     top_k: int = 8,
     skip_synthesis: bool = False,
-    team: bool = False,
 ) -> QueryResult:
     """
     Answer a natural language question using all available data sources.
 
     Gathers context from vault embeddings, GitHub activity, project registry,
-    and recent vault file modifications. Optionally synthesizes via local LLM.
+    recent vault file modifications, and the persisted HiQS ranked verdict.
+    Optionally synthesizes via local LLM.
+
+    The HiQS ranking is ALWAYS attached as the first-class ``hiqs`` field (D1),
+    read from the persisted cache via a cheap cached read (``load_ranked_next_actions``);
+    ``ask()`` never recomputes the ranking (D3), so the default path costs no
+    extra Gemini call and the dashboard + ask() surfaces cannot drift.
 
     Args:
         query:          Natural language question.
@@ -506,23 +542,27 @@ def ask(
         since_days:     Window for GitHub and vault activity context.
         top_k:          Number of semantic search results.
         skip_synthesis: If True, skip local LLM and return raw context only.
-        team:           If True, ALSO compute the ranked "what should we work on
-                        next" list (next_actions.rank_next_actions with
-                        blend_team=True) and stash it on the returned QueryResult
-                        under the NEXT_ACTIONS_ATTR sidecar attribute. Default OFF:
-                        the operator flow + the pinned QueryResult contract stay
-                        byte-identical. Never raises — a degraded rank attaches
-                        nothing extra and ask() returns its normal result.
     """
     start = time.monotonic()
 
     # Gather all context
     project_context, repos_map = _gather_project_context(database_path)
     github_context = _gather_github_context(database_path, repos_map, since_days)
-    github_semantic_context = _gather_github_semantic_context(database_path, query, top_k=min(top_k, 6))
-    vault_context = _gather_vault_context(database_path, query, top_k)
+    try:
+        from rebalance.ingest.semantic_index import query as semantic_query
+        unified_semantic = semantic_query(
+            database_path, query, top_k=top_k * 2, source_filter=["vault", "github"]
+        )
+        vault_context = [r for r in unified_semantic if r["source_type"] == "vault"][:top_k]
+        github_semantic_context = [r for r in unified_semantic if r["source_type"] != "vault"][:top_k]
+    except Exception as e:
+        logger.warning("semantic context unavailable: %s", e)
+        vault_context = []
+        github_semantic_context = []
     vault_activity = _gather_vault_activity(database_path, since_days)
     calendar_context = _gather_calendar_context(database_path, days_forward=2, days_back=since_days)
+    # HiQS ranked verdict — cheap cached read, never a recompute (D3).
+    hiqs = _gather_hiqs_context(database_path).as_dict()
 
     # Temporal context — today + tomorrow (local timezone)
     now = _local_now()
@@ -545,12 +585,13 @@ def ask(
             vault_activity,
             calendar_context,
             temporal_context,
+            hiqs,
         )
         synthesis, model_used = _synthesize_with_fallback(prompt, chat_model=chat_model)
 
     elapsed = time.monotonic() - start
 
-    result = QueryResult(
+    return QueryResult(
         query=query,
         synthesis=synthesis,
         vault_context=vault_context,
@@ -560,29 +601,7 @@ def ask(
         vault_activity=vault_activity,
         calendar_context=calendar_context,
         temporal_context=temporal_context,
+        hiqs=hiqs,
         model_used=model_used,
         elapsed_seconds=round(elapsed, 2),
     )
-
-    # team=True sidecar: attach the ranked next-actions WITHOUT mutating the
-    # pinned QueryResult fields. PREFER the persisted cache so the interactive
-    # ask() path never silently pays for a second Gemini round-trip; only when the
-    # cache is absent fall back to a LIVE but DETERMINISTIC rank (synthesize=False
-    # — the ranked floor, no LLM call). Never raises out of ask(): a degraded rank
-    # just stays unattached. Import is local so the default operator path never
-    # pays for it.
-    if team:
-        try:
-            from rebalance.ingest import next_actions as _next_actions
-
-            ranked = _next_actions.load_ranked_next_actions(database_path)
-            if ranked is None:
-                # No precompute yet — deterministic ranked floor (no LLM call).
-                ranked = _next_actions.rank_next_actions(
-                    database_path, blend_team=True, synthesize=False
-                )
-            setattr(result, NEXT_ACTIONS_ATTR, ranked)
-        except Exception as e:  # noqa: BLE001 — team blend must never break ask()
-            logger.warning("team next-actions rank unavailable: %s", e)
-
-    return result

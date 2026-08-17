@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rebalance-os.obsidian-daily-sync</string>
+
+    <!-- Run through a /bin/bash wrapper, NOT python3 directly: a directly-launched
+         interpreter is denied access to ~/Documents (TCC), but the bash wrapper
+         inherits the existing Full Disk Access grant used by the other rebalance
+         jobs — so no new Full Disk Access entry is needed. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{REBALANCE_DIR}}/utils/obsidian_daily_sync.sh</string>
+    </array>
+
+    <!-- Fire at 18:00 every day. If the Mac is asleep at 6 PM, launchd runs the
+         job as soon as it next wakes — the script's own late-run guard skips any
+         catch-up that fires after midnight (past the 00:00 rollover). -->
+    <!-- 18:20, not 18:00 (GH-175 finding 3): collided with the hourly pulse-sync
+         at :00, and sits clear of git-pulse-daily-synthesis at 18:05. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>18</integer>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+
+    <!-- Stay false: loading should not fire an off-schedule summary write. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Log lives OUTSIDE ~/Documents: that folder is TCC-protected and launchd
+         can't open files there without Full Disk Access. ~/Library/Logs is fine. -->
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/Library/Logs/rebalance-os/obsidian-daily-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/Library/Logs/rebalance-os/obsidian-daily-sync.log</string>
+</dict>
+</plist>

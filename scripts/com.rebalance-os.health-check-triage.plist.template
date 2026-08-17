@@ -23,9 +23,10 @@
          run if the first two exhausted the quota. -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+        <!-- :25 not :00 (GH-175 finding 3) — the hourly pulse-sync owns :00. -->
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>25</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>25</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>25</integer></dict>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -33,12 +34,12 @@
         <!--
         !! NEVER put a real API key in this template file. It is tracked in git. !!
 
-        To pass ANTHROPIC_API_KEY to launchd, copy the rendered plist to
+        To pass GEMINI_API_KEY to launchd, copy the rendered plist to
         ~/Library/LaunchAgents/ (already gitignored as *.plist) and add the key
         there, or set it in your shell profile (~/.zshrc) before loading the job.
 
         Example for the rendered plist only (not this template):
-            <key>ANTHROPIC_API_KEY</key><string>sk-ant-YOUR-KEY-HERE</string>
+            <key>GEMINI_API_KEY</key><string>AIzaSyYOUR-KEY-HERE</string>
 
         CB-1: uncomment in the rendered plist to disable LLM calls from this job:
             <key>HEALTH_LLM_DISABLE</key><string>1</string>

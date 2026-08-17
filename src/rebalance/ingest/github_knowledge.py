@@ -33,8 +33,14 @@ from rebalance.ingest.embedder import (
     _vec_to_bytes,
 )
 from rebalance.ingest.semantic_index import sync_github_documents
+from rebalance.lib.json_ops import _json_dumps
 DEFAULT_SYNC_DAYS = 90
 MIN_EMBED_CHARS = 40
+# GH-171: release the single SQLite writer periodically during a long persist
+# loop instead of holding one write transaction for the whole sync. Mirrors
+# the batch size GH-169's commit-history backfill already established
+# (see github_commit_backfill.py's _COMMIT_BATCH).
+_COMMIT_BATCH = 100
 _CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
 _ISSUE_REF_RE = re.compile(r"(?<![/\w])#(\d+)\b")
 
@@ -138,10 +144,6 @@ def _paginate_list(
 def _cutoff_iso(since_days: int) -> str:
     cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
     return cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _content_hash(text: str) -> str:
@@ -392,11 +394,63 @@ def sync_github_repo(
         direction="desc",
     )
 
+    # --- Fetch phase (GH-171) ---
+    # Pull every per-issue and per-PR payload (comments, reviews, review
+    # comments, commits, check-runs) from the GitHub API here, before any
+    # write transaction opens. Previously all of this fetching happened
+    # *inside* the `with db_connection(...)` block below, so the write
+    # transaction spanned the full network walk — worst case ~49 minutes per
+    # GH-146 — holding the single SQLite writer for the entire run and giving
+    # every other writer a bare "database is locked". What is fetched and how
+    # is unchanged; only the transaction boundary moves.
+    issue_payloads: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for issue in issues:
+        item_number = int(issue["number"])
+        issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
+        issue_payloads.append((issue, issue_comments))
+
+    pr_payloads: list[
+        tuple[
+            dict[str, Any],
+            list[dict[str, Any]],
+            list[dict[str, Any]],
+            list[dict[str, Any]],
+            list[dict[str, Any]],
+            list[dict[str, Any]],
+        ]
+    ] = []
+    for pull_summary in pull_summaries:
+        item_number = int(pull_summary["number"])
+        pr = api_get(f"{repo_base}/pulls/{item_number}")
+        if not isinstance(pr, dict):
+            continue
+
+        pr_issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
+        pr_reviews = _paginate_list(f"{repo_base}/pulls/{item_number}/reviews", api_get)
+        pr_review_comments = _paginate_list(f"{repo_base}/pulls/{item_number}/comments", api_get)
+        pr_commits = _paginate_list(f"{repo_base}/pulls/{item_number}/commits", api_get)
+        check_runs_resp = api_get(_build_url(f"{repo_base}/commits/{pr.get('head', {}).get('sha', '')}/check-runs", per_page=100))
+        pr_check_runs = (
+            check_runs_resp.get("check_runs", [])
+            if isinstance(check_runs_resp, dict)
+            else []
+        )
+        pr_payloads.append(
+            (pr, pr_issue_comments, pr_reviews, pr_review_comments, pr_commits, pr_check_runs)
+        )
+
     comments_synced = 0
     commits_synced = 0
     checks_synced = 0
     docs_built = 0
+    persisted_records = 0
 
+    # --- Persist phase (GH-171) ---
+    # Everything below is a local DB write against already-fetched data. The
+    # write transaction is batch-committed every _COMMIT_BATCH records
+    # (mirrors GH-169's commit-history backfill pattern in
+    # github_commit_backfill.py) so a long sync releases the SQLite writer
+    # periodically instead of holding it for the whole run.
     with db_connection(database_path, ensure_github_schema) as conn:
         gh.delete_repo_table(conn, "github_branches", repo_full_name)
         gh.delete_repo_table(conn, "github_labels", repo_full_name)
@@ -480,7 +534,7 @@ def sync_github_repo(
                 ),
             )
 
-        for issue in issues:
+        for issue, issue_comments in issue_payloads:
             item_type = "issue"
             item_number = int(issue["number"])
             milestone = issue.get("milestone") or {}
@@ -526,7 +580,6 @@ def sync_github_repo(
 
             gh.upsert_item(conn, item_record)
 
-            issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
             for comment in issue_comments:
                 body = comment.get("body", "") or ""
                 gh.upsert_comment(
@@ -579,23 +632,15 @@ def sync_github_repo(
                 )
                 docs_built += 1
 
-        for pull_summary in pull_summaries:
-            item_type = "pull_request"
-            item_number = int(pull_summary["number"])
-            pr = api_get(f"{repo_base}/pulls/{item_number}")
-            if not isinstance(pr, dict):
-                continue
+            # GH-171: release the writer periodically instead of holding one
+            # transaction across the entire issue+PR persist loop.
+            persisted_records += 1
+            if persisted_records % _COMMIT_BATCH == 0:
+                conn.commit()
 
-            issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
-            reviews = _paginate_list(f"{repo_base}/pulls/{item_number}/reviews", api_get)
-            review_comments = _paginate_list(f"{repo_base}/pulls/{item_number}/comments", api_get)
-            commits = _paginate_list(f"{repo_base}/pulls/{item_number}/commits", api_get)
-            check_runs_resp = api_get(_build_url(f"{repo_base}/commits/{pr.get('head', {}).get('sha', '')}/check-runs", per_page=100))
-            check_runs = (
-                check_runs_resp.get("check_runs", [])
-                if isinstance(check_runs_resp, dict)
-                else []
-            )
+        for pr, issue_comments, reviews, review_comments, commits, check_runs in pr_payloads:
+            item_type = "pull_request"
+            item_number = int(pr["number"])
             milestone = pr.get("milestone") or {}
             gh.delete_item_children(conn, repo_full_name, item_type, item_number)
 
@@ -830,6 +875,11 @@ def sync_github_repo(
                 )
                 docs_built += 1
 
+            # GH-171: same periodic-release batching as the issue loop above.
+            persisted_records += 1
+            if persisted_records % _COMMIT_BATCH == 0:
+                conn.commit()
+
         ensure_semantic_schema(conn)
         sync_github_documents(conn, repo_full_name=repo_full_name)
         conn.commit()
@@ -852,6 +902,8 @@ def sync_github_repo(
 
 
 def _default_embed_texts(texts: list[str], model_name: str) -> list[list[float]]:
+    from rebalance.ingest.embedder import instrument_embedding_pass
+    instrument_embedding_pass("_default_embed_texts")
     model, tokenizer = _load_model(model_name)
     return _embed_batch(model, tokenizer, texts)
 
@@ -938,41 +990,3 @@ def embed_github_documents(
         embedding_dim=EMBEDDING_DIM,
         elapsed_seconds=round(time.monotonic() - start, 2),
     )
-
-
-def query_github_documents(
-    database_path: Path,
-    query_text: str,
-    *,
-    repo_full_name: str = "",
-    top_k: int = 8,
-    model_name: str = DEFAULT_EMBED_MODEL,
-    embed_texts: EmbedTexts | None = None,
-) -> list[dict[str, Any]]:
-    embed_fn = embed_texts or _default_embed_texts
-    query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
-
-    with db_connection(database_path, ensure_github_schema) as conn:
-        rows = gh.search_github_documents(
-            conn, query_vec, top_k, repo_full_name=repo_full_name
-        )
-
-    return [
-        {
-            "doc_id": row["doc_id"],
-            "repo_full_name": row["repo_full_name"],
-            "source_type": row["source_type"],
-            "source_number": row["source_number"],
-            "doc_type": row["doc_type"],
-            "title": row["title"],
-            "body_preview": row["body_preview"],
-            "similarity_score": round(1.0 - row["distance"], 4),
-            "state": row["state"] or "",
-            "milestone_title": row["milestone_title"] or "",
-            "labels": json.loads(row["labels_json"]) if row["labels_json"] else [],
-            "review_decision": row["review_decision"] or "",
-            "check_status": row["check_status"] or "",
-            "html_url": row["html_url"] or "",
-        }
-        for row in rows
-    ]

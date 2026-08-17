@@ -33,20 +33,134 @@ to keep them deterministic.
 
 from __future__ import annotations
 
+import atexit
+from collections import Counter
 import json
 import logging
+import os
 import random
+import threading
 import time
 import urllib.error
 import urllib.request
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 GITHUB_API = "https://api.github.com"
 USER_AGENT = "rebalance-os/0.30"
 _API_VERSION = "2022-11-28"
 
 logger = logging.getLogger(__name__)
+
+_PROCESS_RUN_ID = f"pid-{os.getpid()}-{time.time_ns()}"
+_ATTRIBUTION_LOCK = threading.Lock()
+
+
+def _endpoint_path(url: str) -> str:
+    """Return a low-cardinality GitHub route name, without query parameters."""
+    path = urlsplit(url).path or "/"
+    parts = path.strip("/").split("/")
+    if parts[:1] == ["repos"] and len(parts) >= 3:
+        parts[1:3] = ["{owner}", "{repo}"]
+    # GitHub endpoint identifiers (PR, issue, milestone, etc.) are numeric.
+    # Normalising them makes the fan-out visible instead of producing one row
+    # for every individual resource.
+    parts = ["{id}" if part.isdigit() else part for part in parts]
+    return "/" + "/".join(part for part in parts if part)
+
+
+class _RequestAttribution:
+    """Thread-safe, process-local attribution shared by clients in one job."""
+
+    def __init__(self, job_label: str, run_id: str) -> None:
+        self.job_label = job_label
+        self.run_id = run_id
+        self.endpoint_counts: Counter[str] = Counter()
+        self.endpoint_attempt_counts: Counter[str] = Counter()
+        self.logical_requests = 0
+        self.attempts = 0
+        self.rate_limit_first: dict[str, str | int] | None = None
+        self.rate_limit_last: dict[str, str | int] | None = None
+        self.rate_limit_reset_epochs: set[str] = set()
+        self._emitted_attempts = 0
+
+    def record_request(self, url: str) -> None:
+        with _ATTRIBUTION_LOCK:
+            self.logical_requests += 1
+            self.endpoint_counts[_endpoint_path(url)] += 1
+
+    def record_attempt(self, url: str) -> None:
+        with _ATTRIBUTION_LOCK:
+            self.attempts += 1
+            self.endpoint_attempt_counts[_endpoint_path(url)] += 1
+
+    def record_headers(self, status: int, attempt: int, headers: dict[str, str]) -> None:
+        if not any(key.startswith("x-ratelimit-") for key in headers):
+            return
+        # Do not derive a per-job quota delta: this PAT can be shared and a
+        # run can cross an hourly reset. Every retained sample carries reset.
+        sample: dict[str, str | int] = {
+            "status": status,
+            "attempt": attempt,
+            "limit": headers.get("x-ratelimit-limit", ""),
+            "remaining": headers.get("x-ratelimit-remaining", ""),
+            "used": headers.get("x-ratelimit-used", ""),
+            "reset": headers.get("x-ratelimit-reset", ""),
+        }
+        with _ATTRIBUTION_LOCK:
+            if self.rate_limit_first is None:
+                self.rate_limit_first = sample
+            self.rate_limit_last = sample
+            if reset := str(sample["reset"]):
+                self.rate_limit_reset_epochs.add(reset)
+
+    def snapshot(self) -> dict[str, Any]:
+        with _ATTRIBUTION_LOCK:
+            return {
+                "job_label": self.job_label,
+                "run_id": self.run_id,
+                "logical_requests": self.logical_requests,
+                "attempts": self.attempts,
+                "endpoint_counts": dict(sorted(self.endpoint_counts.items())),
+                "endpoint_attempt_counts": dict(sorted(self.endpoint_attempt_counts.items())),
+                "rate_limit_headers": {
+                    "first": self.rate_limit_first,
+                    "last": self.rate_limit_last,
+                    "reset_epochs": sorted(self.rate_limit_reset_epochs),
+                },
+                "rate_limit_note": "Header values are samples, not a per-job quota delta.",
+            }
+
+    def emit_summary(self) -> None:
+        with _ATTRIBUTION_LOCK:
+            if not self.attempts or self._emitted_attempts == self.attempts:
+                return
+            self._emitted_attempts = self.attempts
+        logger.info("github_http_job_summary %s", json.dumps(self.snapshot(), sort_keys=True))
+
+
+_JOB_ATTRIBUTION: dict[tuple[str, str], _RequestAttribution] = {}
+
+
+def _job_attribution(job_label: str, run_id: str) -> _RequestAttribution:
+    key = (job_label, run_id)
+    with _ATTRIBUTION_LOCK:
+        attribution = _JOB_ATTRIBUTION.get(key)
+        if attribution is None:
+            attribution = _RequestAttribution(job_label, run_id)
+            _JOB_ATTRIBUTION[key] = attribution
+        return attribution
+
+
+def _emit_job_summaries() -> None:
+    """Emit one structured summary for each process/run job at shutdown."""
+    with _ATTRIBUTION_LOCK:
+        attributions = list(_JOB_ATTRIBUTION.values())
+    for attribution in attributions:
+        attribution.emit_summary()
+
+
+atexit.register(_emit_job_summaries)
 
 
 class GitHubHTTPError(RuntimeError):
@@ -107,6 +221,12 @@ class GitHubClient:
         Max attempts on 429/5xx (including the first attempt). ``1`` = no retry.
     sleep:
         Test seam for the backoff sleep call.
+    job_label:
+        Human-readable job name for request attribution. Defaults to
+        ``REBALANCE_GITHUB_JOB_LABEL`` or ``github-api``.
+    run_id:
+        Correlation id for the job. Defaults to ``REBALANCE_GITHUB_RUN_ID`` or
+        a process-scoped id. Clients sharing these values share one counter.
     """
 
     def __init__(
@@ -117,12 +237,20 @@ class GitHubClient:
         retries: int = 3,
         sleep=time.sleep,
         user_agent: str = USER_AGENT,
+        job_label: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.token = token
         self.timeout = timeout
         self.retries = max(1, retries)
         self._sleep = sleep
         self._user_agent = user_agent
+        self.job_label = job_label or os.environ.get("REBALANCE_GITHUB_JOB_LABEL", "github-api")
+        self.run_id = run_id or os.environ.get("REBALANCE_GITHUB_RUN_ID", _PROCESS_RUN_ID)
+        # This is deliberately run-scoped rather than client-scoped: legacy
+        # github_scan._get() creates a client per request, and must still be
+        # represented in one job total.
+        self._attribution = _job_attribution(self.job_label, self.run_id)
 
     def headers(self) -> dict[str, str]:
         headers = {
@@ -138,16 +266,21 @@ class GitHubClient:
         last_status = 0
         last_body = ""
         last_headers: dict[str, str] = {}
+        self._attribution.record_request(url)
         for attempt in range(self.retries):
+            self._attribution.record_attempt(url)
             req = urllib.request.Request(url, headers=self.headers())
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     body = resp.read().decode()
                     parsed = json.loads(body) if body else None
-                    return resp.status, parsed, {k.lower(): v for k, v in resp.headers.items()}, ""
+                    response_headers = {k.lower(): v for k, v in resp.headers.items()}
+                    self._attribution.record_headers(resp.status, attempt + 1, response_headers)
+                    return resp.status, parsed, response_headers, ""
             except urllib.error.HTTPError as exc:
                 last_status = exc.code
                 last_headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
+                self._attribution.record_headers(last_status, attempt + 1, last_headers)
                 try:
                     last_body = exc.read().decode() if exc.fp else ""
                 except Exception:  # noqa: BLE001 — body read can fail mid-stream
@@ -161,6 +294,14 @@ class GitHubClient:
                 logger.info("GitHub %s -> %s, retrying in %.1fs (attempt %d/%d)", url, last_status, delay, attempt + 1, self.retries)
                 self._sleep(delay)
         return last_status, None, last_headers, last_body
+
+    def request_summary(self) -> dict[str, Any]:
+        """Return the current structured attribution for this client job."""
+        return self._attribution.snapshot()
+
+    def emit_request_summary(self) -> None:
+        """Emit the current job summary now; process exit emits any pending one."""
+        self._attribution.emit_summary()
 
     def get(self, path_or_url: str) -> tuple[int, Any]:
         """Return ``(status, parsed_json_or_None)``. Mirrors github_scan._get."""

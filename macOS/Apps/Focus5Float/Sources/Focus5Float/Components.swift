@@ -40,14 +40,14 @@ struct GroupTag: View {
                 .fill(Theme.groupColor(name))
                 .frame(width: 7, height: 7)
             Text(name)
-                .font(.system(size: 11, weight: .medium))
+                .font(Theme.monoSmall)
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
         }
-        .padding(.vertical, 2)
-        .padding(.leading, 6)
-        .padding(.trailing, 7)
-        .background(Theme.hover, in: Capsule())
+        .padding(.vertical, 3)
+        .padding(.leading, 7)
+        .padding(.trailing, 8)
+        .background(Theme.hover, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
@@ -74,7 +74,7 @@ struct StatusDot: View {
     }
 
     var body: some View {
-        Circle().fill(color).frame(width: 10, height: 10)
+        Circle().fill(color).frame(width: 11, height: 11)
             .accessibilityLabel(healthAvailable ? (isDirty ? "dirty" : "clean") : "unavailable")
     }
 }

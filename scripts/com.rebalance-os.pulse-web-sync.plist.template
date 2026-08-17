@@ -14,42 +14,42 @@
          36 entries = 18 hours × 2 fires per hour. -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>38</integer></dict>
+        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>8</integer></dict>
+        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>38</integer></dict>
     </array>
 
     <!-- Don't fire automatically on load — daily-sync handles boot freshness;
@@ -65,6 +65,13 @@
 
     <key>KeepAlive</key>
     <false/>
+
+    <!-- Batch job: yield to interactive work (GH-175 remediation 3). Moved from
+         :00/:30 to :08/:38 — it is a derived read-only stage over what
+         pulse-sync writes at :00, so firing in the same minute risked reading a
+         half-written state, not merely contending for CPU. -->
+    <key>Nice</key>
+    <integer>5</integer>
 
     <key>ProcessType</key>
     <string>Background</string>

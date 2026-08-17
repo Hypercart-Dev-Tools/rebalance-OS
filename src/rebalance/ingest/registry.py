@@ -326,6 +326,33 @@ def get_projects(
     return result
 
 
+def effective_client(custom_fields: dict[str, Any] | None) -> str | None:
+    """Resolve a project's client curated-first.
+
+    Curated config ``client`` (operator-set priority rule) always wins; the
+    machine-inferred ``client_inferred`` (owner-as-client) is the fallback;
+    neither present → None (the ``(unassigned)`` bucket on read).
+    """
+    cf = custom_fields or {}
+    return cf.get("client") or cf.get("client_inferred") or None
+
+
+def get_clients(database_path: Path) -> dict[str, list[str]]:
+    """Group project names by effective client. Derived view, not stored state.
+
+    The "discrete client buckets" the next-action synthesis groups by. No
+    ``client_registry`` table exists — clients are an attribute of a project
+    (``custom_fields.client`` curated, ``client_inferred`` machine-owned).
+    """
+    from collections import defaultdict
+
+    buckets: dict[str, list[str]] = defaultdict(list)
+    for project in get_projects(database_path):
+        client = effective_client(project.get("custom_fields")) or "(unassigned)"
+        buckets[client].append(project["name"])
+    return dict(buckets)
+
+
 def get_external_repos(database_path: Path) -> list[str]:
     """Return the external/watched repos declared in the project registry.
 

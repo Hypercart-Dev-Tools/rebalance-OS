@@ -1,0 +1,36 @@
+# 3-Eyes collector-health job (GH-195) — the Rebalance collector-health sentinel,
+# expressed as a registry job. Observe-first: this is DECLARED here, but 3-Eyes
+# does not own its scheduling until the operator activates and installs it. The
+# existing com.rebalance-os.health-check* launchd agents keep running meanwhile.
+#
+# NOTE: top-level keys (id, command, routes, ...) MUST precede any [table] header —
+# in TOML a bare key after `[breakers]` would bind to that table, not the job.
+
+id = "collector-health"
+command = "collector-observe"
+description = "Parse daily_sync telemetry and emit a finding when collectors degrade (GH-146: exit codes lie; sync_outcome is the signal)."
+enabled = true
+routes = ["pdda-inbox", "notify"]
+
+# The ad-hoc agents this job replaces. Both currently run scripts/health_issue_reporter.py,
+# which files GitHub health issues. They are deliberately NOT registry jobs: this observer
+# plus the P7b/P7c pipeline is the sole managed health-finding path. Installing this job while
+# either legacy emitter is loaded would recreate #139's duplicate-issue defect, so `install`
+# refuses until both are retired.
+supersedes = ["com.rebalance-os.health-check", "com.rebalance-os.health-check-triage"]
+
+[schedule.launchd]
+StartInterval = 1800
+
+[rules]
+fire_when = "stale_minutes > 90"
+quiet_hours = "22:00-07:00 PT"
+
+[breakers]
+single_instance = true
+max_rss_gb = 8
+trip_after_failures = 3
+
+[relief]
+llm_daily_max = 8
+llm_per_run_max = 5

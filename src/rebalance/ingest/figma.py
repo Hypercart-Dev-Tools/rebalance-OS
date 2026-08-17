@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Protocol
 
 from rebalance.ingest.db import db_connection, run_migrations
+from rebalance.lib.time_ops import _now
+from rebalance.lib.json_ops import _json_dumps
 
 if TYPE_CHECKING:  # import-cycle / mlx-free: only for type checkers
     from rebalance.ingest.semantic_index import SemanticDoc
@@ -115,14 +117,6 @@ class FigmaSyncResult:
     comments_unchanged: int
     errors: list[dict[str, str]]
     elapsed_seconds: float
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _user_name(user: Any) -> str:

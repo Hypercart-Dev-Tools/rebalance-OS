@@ -1,0 +1,46 @@
+We have an unresolved macOS AppKit bug in this repo, tracked as GH-187. Read
+`PROJECT/1-INBOX/GH-187-FOCUS5-PANEL-FIXES.md` for the full investigation log (chronological,
+including hypotheses we tried and disproved), and read
+`macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift` for the current code (the
+`buildPanel()` function and the `FloatingPanel`/`FirstMouseHostingView` classes are the relevant
+parts).
+
+## The bug
+
+Focus 5 Float is a menu-bar agent app: a floating `NSPanel` (hidden titlebar,
+`titlebarAppearsTransparent = true`, `titleVisibility = .hidden`, `fullSizeContentView`,
+`isMovableByWindowBackground = true`, `isOpaque = false`, `backgroundColor = .clear`,
+`styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel]`) hosting
+SwiftUI content via `NSHostingView`.
+
+The operator cannot drag the panel's top edge to resize it taller (to fill the gap between the
+panel and the menu bar). Dragging near the top instead either does nothing, or drags the whole
+window (background move), and if dragged far enough toward the screen's top edge it triggers
+macOS's native window-tiling "snap to fullscreen" preview outline — but on release the panel
+just snaps to CENTER instead of filling the screen (not taller, only slightly wider, capped by
+`maxSize.width = 420`).
+
+We built a disposable isolated AppKit-only test app mirroring the same window-chrome settings
+(no SwiftUI, no custom drag handling) and it resized/moved freely — ruling out the window-chrome
+settings alone (styleMask, isMovableByWindowBackground, isOpaque/transparent flip, maxSize.width
+cap) as the sole cause. We then tried adding a custom top-edge `NSView` drag handle
+(overriding `mouseDown`/`mouseDragged`, manually calling `window.setFrame`) to bypass whatever was
+broken in the native resize path — this made things WORSE (regressed normal edge-to-edge
+resize), and we reverted it.
+
+We were unable to attach a real debugger or Instruments session to a live human-driven drag in
+our environment (headless), and headless synthetic mouse-event simulation (`CGEventPost`) proved
+unreliable for testing held-button drag gestures, so we could not fully diagnose why the native
+resize path itself doesn't work correctly on the real Focus5Float app when it does work fine on
+the isolated test app.
+
+## What we want from you
+
+Do NOT write code or make any changes. This is advisory only — just give us your best diagnostic
+ideas and hypotheses for what could be different between the real Focus5Float app and our
+isolated test app that would explain this specific symptom (native resize broken / tiling
+snaps to center instead of resizing), and what you'd check first. Be concrete — name specific
+AppKit APIs, properties, or interactions you suspect, and how you'd verify each one (ideally
+something checkable via source reading or a quick script, since we don't have reliable
+interactive-drag simulation available). Rank your suspects by how likely you think each is,
+and flag anything you're not confident about.

@@ -10,18 +10,40 @@ import EventKit
 
 struct ContentView: View {
     let model: Focus5Model
+    let onHide: () -> Void
+    @State private var showingResetPinsConfirm = false
+    @State private var promptLogFilter = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().overlay(Theme.separator)
-            content
+        ZStack {
+            RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous)
+                .fill(Theme.glassFill)
+            VStack(spacing: 0) {
+                header
+                Divider().overlay(Theme.separator)
+                content
+            }
         }
-        .background(Theme.window)
-        .overlay(alignment: .top) {
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous)
+                .strokeBorder(Theme.glassEdge, lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.24), radius: 30, x: 0, y: 18)
+        // GH-187 REGRESSION GUARD: no top gutter here. FirstMouseHostingView
+        // suppresses the hidden titlebar's 28pt safe area; adding the old 6pt
+        // all-edge padding back would recreate a visible gap even though the
+        // actual NSPanel frame is correctly flush with the menu bar. Keep only
+        // the side/bottom gutters needed by the glass shadow.
+        .padding(.horizontal, 6)
+        .padding(.bottom, 6)
+        .background(Color.clear)
+        .overlay(alignment: .bottom) {
             if let banner = model.banner {
                 TopBanner(text: banner)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(1)
             }
         }
@@ -30,12 +52,13 @@ struct ContentView: View {
 
     // MARK: Bottom sections (Reminders + Note)
 
-    /// The two bottom sections — Apple Reminders (A) over the focus5.md note (B) —
-    /// rendered inline at the end of the single roster scroll so they size to
-    /// their content (liquid) and flow right under the cards with no dead space.
-    /// Non-telemetry only; the note appears once its first fetch lands.
+    /// The bottom drawer sections — Apple Reminders, Obsidian Reminders, then the
+    /// focus5.md note — rendered inline at the end of the single roster scroll so
+    /// they size to their content (liquid) and flow right under the cards with no
+    /// dead space. Non-telemetry only; the note appears once its first fetch lands.
     @ViewBuilder private var bottomSections: some View {
         RemindersSection(store: model.reminders)
+        ObsidianRemindersSection(store: model.obsidianReminders)
         if model.noteLoaded {
             Focus5NoteView(exists: model.noteExists, content: model.noteContent)
         }
@@ -44,153 +67,197 @@ struct ContentView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(spacing: Theme.Space.xs) {
-            // Row 1 — compact tab switcher + actions. Emoji-only labels keep the
-            // 3-segment picker narrow enough for a ~180-wide panel; the tab names
-            // live in the help tooltips + accessibility labels.
+        VStack(spacing: Theme.Space.s) {
             HStack(spacing: Theme.Space.s) {
-                Picker("", selection: Binding(
-                    get: { model.viewMode },
-                    set: { mode in
-                        model.viewMode = mode
-                        switch mode {
-                        case .focus5:    Task { await model.setMode(dirty: false) }
-                        case .dirtyFive: Task { await model.setMode(dirty: true) }
-                        case .telemetry: model.refreshTelemetry()
-                        }
-                    }
-                )) {
-                    Text("🎯").tag(ViewMode.focus5)
-                        .help("Focus 5").accessibilityLabel("Focus 5")
-                    Text("🧹").tag(ViewMode.dirtyFive)
-                        .help("Dirty Five").accessibilityLabel("Dirty Five")
-                    Text("📊").tag(ViewMode.telemetry)
-                        .help("Telemetry").accessibilityLabel("Telemetry")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize(horizontal: true, vertical: false)
+                ToolbarIconButton(systemName: "xmark", isDestructive: true, action: onHide)
+                    .help("Hide panel")
+                    .accessibilityLabel("Hide panel")
 
-                Button {
-                    Task {
-                        await model.refresh()
-                        // Confirm the manual refresh did something — the button
-                        // otherwise gives no visible feedback. Skip when offline so
-                        // we never claim success the fetch didn't actually achieve.
-                        if model.viewMode == .telemetry || !model.isOffline {
-                            model.flashBanner("Repos refreshed")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(Theme.text2)
-                .help(model.viewMode == .telemetry ? "Re-read telemetry files" : "Re-pull /focus-5.json")
+                ModeSegmentedControl(selected: model.viewMode, onSelect: selectMode)
 
-                Button {
-                    narrowWindow()
-                } label: {
-                    Text("「」")
-                        .font(.system(size: 13))
-                        .fixedSize()
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(Theme.text2)
-                .help("Snap to narrowest width (keeps height)")
+                Spacer(minLength: Theme.Space.xs)
 
-                if model.viewMode != .telemetry && model.isOffline {
-                    Button {
-                        Task { await model.startServer() }
-                    } label: {
-                        Image(systemName: model.isStartingServer ? "hourglass" : "play.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.accent)
-                    .disabled(model.isStartingServer)
-                    .help("Start rebalance serve")
-                }
+                ToolbarIconButton(systemName: "arrow.clockwise", action: refreshPanel)
+                    .help(refreshHelpText)
 
-                Spacer(minLength: 0)
+                ToolbarIconButton(systemName: "arrow.up.left.and.arrow.down.right", action: togglePanelWidth)
+                    .help("Toggle panel width")
             }
 
-            // Row 2 — status line. Wrapped down off the tab row so the panel can
-            // shrink to ~180 wide: count/updated on the left (truncates first),
-            // the health light pinned right.
             HStack(spacing: Theme.Space.s) {
                 if model.viewMode == .telemetry {
-                    if let url = model.telemetryFileURL {
-                        Text(url.lastPathComponent)
-                            .font(Theme.caption).foregroundStyle(Theme.text2)
-                            .lineLimit(1).truncationMode(.middle)
-                        if !model.telemetryEntries.isEmpty {
-                            Text("· \(model.telemetryEntries.count)")
-                                .font(Theme.caption).foregroundStyle(Theme.text3)
-                        }
-                    } else {
-                        Text("No file selected")
-                            .font(Theme.caption).foregroundStyle(Theme.text3)
-                    }
+                    telemetryStatus
+                    Spacer(minLength: Theme.Space.xs)
+                    telemetryBadge
+                } else if model.viewMode == .promptLog {
+                    promptLogStatus
+                    Spacer(minLength: Theme.Space.xs)
                 } else {
-                    Text("\(model.roster.count) repos")
-                        .font(Theme.caption).foregroundStyle(Theme.text2).fixedSize()
-                    if !model.lastUpdatedAgo.isEmpty {
-                        Text("· \(model.lastUpdatedAgo)")
-                            .font(Theme.caption).foregroundStyle(Theme.text3)
-                            .lineLimit(1).truncationMode(.tail)
-                    }
-                    if model.isStale {
-                        Text("⚠").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
-                            .help("Roster is stale")
-                    }
-                    if model.showingCache {
-                        Text("cached").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
-                            .help("Showing cached roster from \(model.cachedAgo)")
-                    } else if model.isOffline {
-                        Text("offline").font(Theme.caption).foregroundStyle(Theme.diffRemove)
-                    }
+                    rosterStatus
+                    Spacer(minLength: Theme.Space.xs)
+                    rosterAttentionBadge
                 }
-                Spacer(minLength: Theme.Space.xs)
-                healthLight
             }
         }
-        .padding(Theme.Space.m)
+        .padding(.horizontal, Theme.Space.l)
+        .padding(.top, Theme.Space.l)
+        .padding(.bottom, Theme.Space.m)
     }
 
-    /// Snap the floating panel to its minimum width, leaving height + position
-    /// otherwise as-is (the bottom-left corner stays put, the right edge moves in).
-    private func narrowWindow() {
+    // GH-121 Phase 2: names both the file AND its kind, so which viewer mode is
+    // active ("markdown" text vs. "signals" structured) is legible at a glance —
+    // not just the filename, which doesn't reliably signal kind at small sizes /
+    // truncation. `telemetryIsMarkdown` is the same single-source-of-truth
+    // discriminator the load/render branches use, so this can't drift from them.
+    @ViewBuilder private var telemetryStatus: some View {
+        if let url = model.telemetryFileURL {
+            Text(url.lastPathComponent)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if model.telemetryIsMarkdown {
+                Text("· markdown")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+            } else if model.telemetryLoadError == nil {
+                Text(model.telemetryEntries.isEmpty
+                     ? "· signals"
+                     : "· signals · \(model.telemetryEntries.count)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+            }
+        } else {
+            Text("No file selected")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text3)
+        }
+    }
+
+    @ViewBuilder private var promptLogStatus: some View {
+        if let url = model.promptLogFileURL {
+            Text(url.lastPathComponent)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if model.promptLogLoadError == nil {
+                Text("· \(model.promptLogEntries.count) prompts · \(model.pinnedPromptLogEntries.count) pinned")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+            }
+        } else {
+            Text("No file selected")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text3)
+        }
+    }
+
+    private var rosterStatus: some View {
+        HStack(spacing: 6) {
+            Text("\(model.roster.count) repos")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .fixedSize()
+            if !model.lastUpdatedAgo.isEmpty {
+                Text("·")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+                Text("synced \(model.lastUpdatedAgo)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if model.showingCache {
+                Text("· cached")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.attention)
+                    .help("Showing cached roster from \(model.cachedAgo)")
+            } else if model.isOffline {
+                Text("· offline")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.diffRemove)
+            } else if model.isStale {
+                Text("· stale")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.attention)
+                    .help("Roster is stale")
+            }
+        }
+    }
+
+    @ViewBuilder private var telemetryBadge: some View {
+        if !model.telemetryEntries.isEmpty {
+            let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
+            statusBadge(
+                count: nonGreen,
+                tint: nonGreen == 0 ? Theme.diffAdd : Theme.attention,
+                help: "\(nonGreen) of \(model.telemetryEntries.count) signals need attention"
+            )
+        }
+    }
+
+    private var rosterAttentionBadge: some View {
+        let attentionCount = model.offRoster.count
+        return statusBadge(
+            count: attentionCount,
+            tint: attentionCount == 0 ? Theme.diffAdd : Theme.attention,
+            help: attentionCount == 0
+                ? "No off-roster repos currently need attention"
+                : "\(attentionCount) off-roster repos need attention"
+        )
+        .accessibilityLabel(attentionCount == 0 ? "No repos need attention" : "\(attentionCount) repos need attention")
+    }
+
+    private var refreshHelpText: String {
+        switch model.viewMode {
+        case .telemetry: return "Re-read telemetry files"
+        case .promptLog: return "Re-read prompt log file"
+        default: return "Re-pull /focus-5.json"
+        }
+    }
+
+    private func refreshPanel() {
+        Task {
+            await model.refresh()
+            if model.viewMode == .telemetry || !model.isOffline {
+                model.flashBanner("Repos refreshed")
+            }
+        }
+    }
+
+    private func selectMode(_ mode: ViewMode) {
+        model.viewMode = mode
+        switch mode {
+        case .focus5:
+            Task { await model.setMode(dirty: false) }
+        case .dirtyFive:
+            Task { await model.setMode(dirty: true) }
+        case .telemetry:
+            model.refreshTelemetry()
+        case .promptLog:
+            model.refreshPromptLog()
+        }
+    }
+
+    /// Toggle between the reference width (340) and a bounded wider mode for
+    /// longer repo names / telemetry descriptions.
+    private func togglePanelWidth() {
         guard let panel = NSApp.windows.first(where: { $0 is FloatingPanel }) else { return }
         var frame = panel.frame
-        frame.size.width = panel.minSize.width   // height unchanged
+        frame.size.width = frame.width < 380 ? 420 : 340
         panel.setFrame(frame, display: true, animate: true)
     }
 
-    /// The roster/telemetry health light — a dirty-count + tinted dot, adapting to
-    /// the active tab. Lives on the status row (row 2) so it no longer widens the
-    /// tab row.
-    @ViewBuilder private var healthLight: some View {
-        if model.viewMode == .telemetry {
-            if !model.telemetryEntries.isEmpty {
-                let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
-                healthBadge(count: nonGreen,
-                            tint: RosterHealth.tint(dirty: nonGreen, total: model.telemetryEntries.count),
-                            help: "\(nonGreen) of \(model.telemetryEntries.count) signals need attention")
-            }
-        } else if !model.roster.isEmpty {
-            let dirty = model.roster.filter(\.isDirty).count
-            healthBadge(count: dirty,
-                        tint: RosterHealth.tint(dirty: dirty, total: model.roster.count),
-                        help: "\(dirty) of \(model.roster.count) roster repos dirty")
-                .accessibilityLabel("Status: \(dirty) of \(model.roster.count) roster repos dirty")
-        }
-    }
-
-    private func healthBadge(count: Int, tint: Color, help: String) -> some View {
-        HStack(spacing: 5) {
+    private func statusBadge(count: Int, tint: Color, help: String) -> some View {
+        HStack(spacing: 7) {
             Text("\(count)")
-                .font(Theme.caption).foregroundStyle(Theme.text2)
-            Circle().fill(tint).frame(width: 11, height: 11)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Circle()
+                .fill(tint)
+                .frame(width: 10, height: 10)
         }
         .fixedSize()
         .help(help)
@@ -201,6 +268,8 @@ struct ContentView: View {
     @ViewBuilder private var content: some View {
         if model.viewMode == .telemetry {
             telemetryContent
+        } else if model.viewMode == .promptLog {
+            promptLogContent
         } else {
             switch model.loadState {
             case .idle, .loading:
@@ -229,6 +298,9 @@ struct ContentView: View {
             case .loaded:
                 ScrollView {
                     LazyVStack(spacing: Theme.Space.s) {
+                        if let banner = model.dirtyBanner {
+                            DirtyBannerView(warning: banner)
+                        }
                         ForEach(Array(model.roster.enumerated()), id: \.element.id) { index, card in
                             RepoCardView(card: card, darker: !index.isMultiple(of: 2))
                         }
@@ -250,7 +322,7 @@ struct ContentView: View {
                     .font(.system(size: 22)).foregroundStyle(Theme.text3)
                 Text("No file selected")
                     .font(Theme.bodyMed).foregroundStyle(Theme.text)
-                Text("Choose a .json file to display health signals.")
+                Text("Choose a .json file for health signals, or a .md file for notes.")
                     .font(Theme.monoSmall).foregroundStyle(Theme.text3)
                     .multilineTextAlignment(.center)
                 Button("Select Telemetry File…") { model.openFilePicker() }
@@ -263,6 +335,31 @@ struct ContentView: View {
             emptyState(icon: "exclamationmark.triangle",
                        title: "Can't read telemetry file",
                        detail: err)
+        } else if model.telemetryIsMarkdown {
+            // GH-121 Phase 2 large-file safety: `Focus5Model.telemetryMarkdownByteCeiling`
+            // (1MB, in `refreshTelemetry()`) is the actual bound here — `text` below
+            // is never larger than that ceiling, since the synchronous
+            // `Data(contentsOf:)` read is already truncated (byte-safe, never
+            // mid-codepoint) BEFORE this view ever sees the string. So this
+            // ScrollView + MarkdownBody render is bounded by the same 1MB cap that
+            // already bounds the read: at most a few thousand short lines, which is
+            // the exact rendering path already shipped (unbounded) for the vault
+            // focus5.md note. No additional chunking/pagination/lazy-loading is
+            // needed for Phase 2 — the ceiling IS the safety mechanism end-to-end.
+            if let text = model.telemetryMarkdownContent,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        MarkdownBody(content: text)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Theme.Space.m)
+                }
+            } else {
+                emptyState(icon: "doc.text",
+                           title: "Empty file",
+                           detail: "The selected file has no content.")
+            }
         } else if model.telemetryEntries.isEmpty {
             emptyState(icon: "waveform.path.ecg",
                        title: "No signals",
@@ -276,6 +373,146 @@ struct ContentView: View {
                 }
                 .padding(Theme.Space.m)
             }
+        }
+    }
+
+    @ViewBuilder private var promptLogContent: some View {
+        if model.promptLogFileURL == nil {
+            VStack(spacing: Theme.Space.m) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 22)).foregroundStyle(Theme.text3)
+                Text("No file selected")
+                    .font(Theme.bodyMed).foregroundStyle(Theme.text)
+                Text("Choose the CLIO-rendered prompt log Markdown file.")
+                    .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                    .multilineTextAlignment(.center)
+                Button("Select Prompt Log File…") { model.openPromptLogFilePicker() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let err = model.promptLogLoadError {
+            emptyState(icon: "exclamationmark.triangle",
+                       title: "Can't read prompt log file",
+                       detail: err)
+        } else if model.promptLogEntries.isEmpty {
+            emptyState(icon: "text.bubble",
+                       title: "No prompts yet",
+                       detail: "The selected file has no entries.")
+        } else {
+            // Filter field + pinned section both live OUTSIDE the ScrollView so
+            // they're a true fixed header (like a sticky nav bar) — only the
+            // feed below scrolls. Putting the pinned section inside the same
+            // LazyVStack/ScrollView (the original bug) just made it scroll away
+            // with everything else.
+            VStack(alignment: .leading, spacing: 0) {
+                promptLogFilterField
+                    .padding(.horizontal, Theme.Space.m)
+                    .padding(.top, Theme.Space.m)
+                    .padding(.bottom, Theme.Space.s)
+
+                if !filteredPinnedEntries.isEmpty {
+                    VStack(alignment: .leading, spacing: Theme.Space.s) {
+                        pinnedSectionHeader
+                        ForEach(filteredPinnedEntries) { entry in
+                            PromptLogRowView(entry: entry, isPinned: true, openInfo: model.vscodeOpenInfo(forRepoName: entry.repo)) {
+                                model.togglePin(entry)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Theme.Space.m)
+                    .padding(.bottom, Theme.Space.m)
+                    Divider().overlay(Theme.separator)
+                }
+
+                if filteredPinnedEntries.isEmpty && filteredUnpinnedEntries.isEmpty {
+                    emptyState(icon: "magnifyingglass",
+                               title: "No matches",
+                               detail: "No prompts from a repo matching \"\(promptLogFilter)\".")
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
+                            ForEach(Array(filteredUnpinnedEntries.enumerated()), id: \.element.id) { index, entry in
+                                PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2), openInfo: model.vscodeOpenInfo(forRepoName: entry.repo)) {
+                                    model.togglePin(entry)
+                                }
+                            }
+                        }
+                        .padding(Theme.Space.m)
+                    }
+                }
+            }
+        }
+    }
+
+    // Text field filtering the prompt log feed (both pinned and unpinned) by
+    // repo name — case-insensitive substring match, empty string shows all.
+    private var promptLogFilterField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+            TextField("Filter by repo…", text: $promptLogFilter)
+                .textFieldStyle(.plain)
+                .font(Theme.body)
+                .foregroundStyle(Theme.text)
+            if !promptLogFilter.isEmpty {
+                Button { promptLogFilter = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text3)
+                }
+                .buttonStyle(.plain)
+                .help("Clear filter")
+            }
+        }
+        .padding(.horizontal, Theme.Space.s)
+        .padding(.vertical, 6)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 0.5)
+        )
+    }
+
+    private var filteredPinnedEntries: [PromptLogEntry] {
+        filterByRepo(model.pinnedPromptLogEntries)
+    }
+    private var filteredUnpinnedEntries: [PromptLogEntry] {
+        filterByRepo(model.unpinnedPromptLogEntries)
+    }
+    private func filterByRepo(_ entries: [PromptLogEntry]) -> [PromptLogEntry] {
+        let needle = promptLogFilter.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return entries }
+        return entries.filter { $0.repo.localizedCaseInsensitiveContains(needle) }
+    }
+
+    // "PINNED (n/5)" caption + a reset-all control that reuses the header's
+    // refresh glyph — gated behind a confirmation dialog since it's destructive
+    // to the operator's manually-curated anchor list, unlike the header refresh.
+    private var pinnedSectionHeader: some View {
+        HStack(spacing: 6) {
+            Text("PINNED (\(model.pinnedPromptLogEntries.count)/\(Focus5Model.maxPinnedPromptLogEntries))")
+                .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
+            Spacer(minLength: 0)
+            Button { showingResetPinsConfirm = true } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.text3)
+            }
+            .buttonStyle(.plain)
+            .help("Release all pins")
+        }
+        .confirmationDialog(
+            "Release all pins?",
+            isPresented: $showingResetPinsConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Release All Pins", role: .destructive) { model.resetAllPromptLogPins() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes all \(model.pinnedPromptLogEntries.count) pinned entries. This can't be undone.")
         }
     }
 
@@ -322,43 +559,138 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Header controls
+
+private struct ToolbarIconButton: View {
+    let systemName: String
+    var isDestructive = false
+    let action: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 16, height: 16)
+                .frame(width: 28, height: 28)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(hovered ? foregroundHover : Theme.text2)
+        .background(hovered ? backgroundHover : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .onHover { hovered = $0 }
+    }
+
+    private var backgroundHover: Color {
+        isDestructive ? Theme.destructiveHover : Theme.hover
+    }
+
+    private var foregroundHover: Color {
+        isDestructive ? Theme.destructiveText : Theme.text
+    }
+}
+
+private struct ModeSegmentedControl: View {
+    let selected: ViewMode
+    let onSelect: (ViewMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            SegmentedModeButton(systemName: "scope",
+                                label: "Focus",
+                                isSelected: selected == .focus5) { onSelect(.focus5) }
+            divider
+            SegmentedModeButton(systemName: "paintbrush",
+                                label: "Tidy",
+                                isSelected: selected == .dirtyFive) { onSelect(.dirtyFive) }
+            divider
+            SegmentedModeButton(systemName: "chart.bar",
+                                label: "Stats",
+                                isSelected: selected == .telemetry) { onSelect(.telemetry) }
+            divider
+            SegmentedModeButton(systemName: "text.bubble",
+                                label: "Prompts",
+                                isSelected: selected == .promptLog) { onSelect(.promptLog) }
+        }
+        .padding(2)
+        .background(Theme.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 0.5)
+        )
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Theme.separator)
+            .frame(width: 0.5, height: 16)
+    }
+}
+
+private struct SegmentedModeButton: View {
+    let systemName: String
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 30, height: 26)
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? Theme.text : Theme.text2)
+        .background(background,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .help(label)
+        .accessibilityLabel(label)
+        .onHover { hovered = $0 }
+    }
+
+    private var background: Color {
+        if isSelected { return Theme.hover }
+        return hovered ? Theme.hover : .clear
+    }
+}
+
 // MARK: - Repo card (collapsible)
 
 struct RepoCardView: View {
     let card: RepoCard
-    var darker: Bool = false        // zebra stripe — alternate rows use elevatedAlt
+    var darker: Bool = false
     @State private var expanded = false
+    @State private var hovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Row 1 — position badge + actions (Open / status / chevron), so the
-            // controls share one slim row regardless of how wide the name is.
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s) {
-                KeyCap(text: "#\(card.position)")
+                KeyCap(text: "#\(card.position)", font: Theme.monoSmall, height: 24)
                 Spacer(minLength: Theme.Space.s)
-                Button("Open ↗") { VSCodeLauncher.launch(repoPath: card.localPath, fallbackURL: card.vscodeUrl) }
-                    .buttonStyle(.borderless)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.accent)
-                    .fixedSize()
-                    .help("Open \(card.repoName) in VS Code")
+                OpenRepoButton(repoName: card.repoName, localPath: card.localPath, vscodeURL: card.vscodeUrl)
                 StatusDot(isDirty: card.isDirty, healthAvailable: card.healthAvailable)
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
 
-            // Row 2 — repo name, full width + prominent; wraps in the narrow panel
-            // instead of competing with the badge/controls for horizontal space.
             Text(card.repoName)
-                .font(Theme.display).foregroundStyle(Theme.text)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 9)
 
-            // Rank reason / last-commit line — smaller + greyer (a caption, not body).
-            Text(card.rankReason)
-                .font(.system(size: 11)).foregroundStyle(Theme.text3)
-                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text(commitLine)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text3)
+                .padding(.top, 8)
 
             HStack(spacing: Theme.Space.m) {
                 if let branch = card.branch { GroupTag(name: branch) }
@@ -366,24 +698,33 @@ struct RepoCardView: View {
                 Text("\(card.modifiedCount)M \(card.untrackedCount)U")
                 Spacer(minLength: 0)
             }
-            .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+            .font(Theme.monoSmall)
+            .foregroundStyle(Theme.text2)
+            .padding(.top, 10)
 
-            if expanded { detail }
+            if expanded {
+                detail
+                    .padding(.top, 10)
+            }
         }
         .padding(Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(darker ? Theme.elevatedAlt : Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
-                .strokeBorder(Theme.separator, lineWidth: 1)
-        )
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(Theme.spring) { expanded.toggle() } }
+        .onHover { hovered = $0 }
     }
 
     // Expanded sub-sections — mirrors the web card.
     @ViewBuilder private var detail: some View {
-        Divider().overlay(Theme.separator).padding(.vertical, 2)
+        Divider().overlay(Theme.separator).padding(.bottom, 2)
+
+        CardSection(label: "Why ranked") {
+            Text(card.rankReason)
+                .font(Theme.body)
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
 
         CardSection(label: "Tree health") {
             HStack(spacing: 6) {
@@ -429,6 +770,21 @@ struct RepoCardView: View {
         return card.isDirty ? "\(card.modifiedCount) modified, \(card.untrackedCount) untracked" : "clean"
     }
 
+    private var commitLine: String {
+        if let ts = card.myLastCommitTs {
+            return "your commit \(RelTime.ago(Date(timeIntervalSince1970: TimeInterval(ts))))"
+        }
+        if let last = card.lastCommitAt {
+            return "recent commit \(RelTime.ago(last))"
+        }
+        return card.rankReason
+    }
+
+    private var rowBackground: Color {
+        if hovered { return Theme.hover }
+        return darker ? Theme.hover : .clear
+    }
+
     private var prFallback: String {
         if card.repoFullName != nil { return "no open PR synced yet" }
         if card.remoteUrl != nil { return "non-GitHub remote" }
@@ -437,6 +793,36 @@ struct RepoCardView: View {
 
     private func open(_ urlString: String) {
         if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
+    }
+}
+
+private struct OpenRepoButton: View {
+    let repoName: String
+    let localPath: String
+    let vscodeURL: String
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button {
+            VSCodeLauncher.launch(repoPath: localPath, fallbackURL: vscodeURL)
+        } label: {
+            HStack(spacing: 3) {
+                Text("Open")
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(hovered ? Theme.accentSoft : .clear,
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Open \(repoName) in VS Code")
+        .onHover { hovered = $0 }
     }
 }
 
@@ -490,9 +876,75 @@ struct TelemetryRowView: View {
     }
 }
 
+// MARK: - Prompt Log row (CLIO)
+
+/// Reuses `RepoCardView`'s exact visual language (top badge + spacer + action
+/// control, bold title, `Theme.monoSmall` meta row, zebra/hover background) —
+/// the only differences are the pin control in place of the open/expand
+/// controls, and the data being a logged prompt instead of a repo.
+struct PromptLogRowView: View {
+    let entry: PromptLogEntry
+    let isPinned: Bool
+    var darker: Bool = false
+    // Resolved via Focus5Model.vscodeOpenInfo(forRepoName:) — nil when the
+    // repo isn't in the current roster/off-roster payload, in which case the
+    // "Open ↗" button just doesn't render (best-effort, not a dead button).
+    var openInfo: (localPath: String, vscodeURL: String)? = nil
+    let onTogglePin: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Theme.Space.s) {
+                KeyCap(text: RelTime.ago(entry.timestamp), font: Theme.monoSmall, height: 24)
+                Spacer(minLength: Theme.Space.s)
+                if let openInfo {
+                    OpenRepoButton(repoName: entry.repo, localPath: openInfo.localPath, vscodeURL: openInfo.vscodeURL)
+                }
+                Button(action: onTogglePin) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isPinned ? Theme.accent : Theme.text3)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Pin (max 5 — pinning a 6th releases the oldest pin)")
+            }
+
+            Text(entry.truncatedPrompt)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.text)
+                .lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 9)
+
+            HStack(spacing: Theme.Space.m) {
+                GroupTag(name: entry.repo)
+                if let branch = entry.branch { GroupTag(name: branch) }
+                if !entry.machine.isEmpty { Text(entry.machine) }
+                Spacer(minLength: 0)
+            }
+            .font(Theme.monoSmall)
+            .foregroundStyle(Theme.text2)
+            .padding(.top, 10)
+        }
+        .padding(Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .onHover { hovered = $0 }
+    }
+
+    private var rowBackground: Color {
+        if isPinned { return Theme.accentSoft }
+        if hovered { return Theme.hover }
+        return darker ? Theme.hover : .clear
+    }
+}
+
 // MARK: - Apple Reminders (section A)
 
-/// Section A — the 10 most-recent active tasks from the default Apple Reminders
+/// Section A — the 8 most-recent active tasks from the default Apple Reminders
 /// list, read+written LIVE via EventKit (see `RemindersStore`). Branches on the
 /// TCC authorization state: an enable button before the grant, a System-Settings
 /// hint if denied, the bounded scrollable task list once granted. Each row's
@@ -502,7 +954,7 @@ struct RemindersSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Text("REMINDERS")
+            Text("APPLE REMINDERS")
                 .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
             content
         }
@@ -549,6 +1001,56 @@ struct RemindersSection: View {
                     .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+}
+
+// MARK: - Obsidian Reminders (section B)
+
+/// Section B — the top 8 unchecked tasks from the vault-root `0. Goals.md`,
+/// read + checkbox-complete through the shared localhost Focus 5 routes.
+struct ObsidianRemindersSection: View {
+    let store: ObsidianRemindersStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text("OBSIDIAN REMINDERS")
+                .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, Theme.Space.s)
+    }
+
+    @ViewBuilder private var content: some View {
+        if !store.isLoaded && store.items.isEmpty {
+            Text("Loading 0. Goals.md…")
+                .font(Theme.body).foregroundStyle(Theme.text3)
+                .padding(.vertical, 2)
+        } else if let err = store.loadError, store.items.isEmpty {
+            Text(err)
+                .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if !store.fileExists {
+            Text(store.emptyStateMessage)
+                .font(Theme.body).foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if store.items.isEmpty {
+            Text("No open tasks in 0. Goals.md.")
+                .font(Theme.body).foregroundStyle(Theme.text3)
+                .padding(.vertical, 2)
+        } else {
+            VStack(spacing: 4) {
+                ForEach(store.items) { reminder in
+                    ObsidianReminderRow(reminder: reminder, store: store)
+                }
+            }
+        }
+
+        if let err = store.loadError, !store.items.isEmpty {
+            Text(err)
+                .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -605,6 +1107,48 @@ struct ReminderRow: View {
     }
 }
 
+struct ObsidianReminderRow: View {
+    let reminder: ObsidianReminder
+    let store: ObsidianRemindersStore
+
+    private var isCompleting: Bool {
+        store.completingLineIndexes.contains(reminder.lineIndex)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s) {
+            Button {
+                Task { await store.complete(reminder) }
+            } label: {
+                Image(systemName: isCompleting ? "circle.inset.filled" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isCompleting ? Theme.accent : Theme.text3)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isCompleting)
+            .help("Mark complete in 0. Goals.md")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reminder.title)
+                    .font(Theme.body).foregroundStyle(isCompleting ? Theme.text3 : Theme.text)
+                    .strikethrough(isCompleting)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if !reminder.description.isEmpty {
+                    Text(reminder.description)
+                        .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .opacity(isCompleting ? 0.6 : 1)
+        .animation(.easeInOut(duration: 0.2), value: isCompleting)
+    }
+}
+
 // MARK: - Bottom note (vault focus5.md)
 
 /// Free-form note pulled from the operator's Obsidian vault (`focus5.md`), shown
@@ -626,10 +1170,7 @@ struct Focus5NoteView: View {
             Text("NOTE")
                 .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
             if exists && hasText {
-                let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    MarkdownLine(raw: line)
-                }
+                MarkdownBody(content: content)
             } else {
                 Text("To show a text file here, add a doc called focus5.md into your Obsidian vault.")
                     .font(Theme.body)
@@ -646,6 +1187,78 @@ struct Focus5NoteView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
+    }
+}
+
+/// Shared markdown renderer — used by both the vault focus5.md note
+/// (`Focus5NoteView`) and the telemetry tab's `.md` viewer so there's a single
+/// rendering path for freeform notes in the panel. GFM pipe tables render as a
+/// real `MarkdownTableView` grid; everything else falls through to `MarkdownLine`.
+private struct MarkdownBody: View {
+    let content: String
+
+    var body: some View {
+        let blocks = MarkdownTableParser.parse(content)
+        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            switch block {
+            case .table(let table):
+                MarkdownTableView(table: table)
+            case .line(let raw):
+                MarkdownLine(raw: Substring(raw))
+            }
+        }
+    }
+}
+
+/// Renders a parsed GFM table as a scrollable grid — a real table instead of
+/// literal `|` text — matching the panel's card styling (elevated background,
+/// hairline border). Column count comes from the header; ragged data rows are
+/// already padded/truncated to match by `MarkdownTableParser`.
+private struct MarkdownTableView: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: Theme.Space.s, verticalSpacing: 4) {
+                GridRow {
+                    ForEach(Array(table.header.enumerated()), id: \.offset) { i, cell in
+                        Text(cell)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .gridColumnAlignment(horizontalAlignment(for: i))
+                    }
+                }
+                Divider().gridCellColumns(max(table.header.count, 1)).overlay(Theme.separator)
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            Text(cell)
+                                .font(Theme.body)
+                                .foregroundStyle(Theme.text2)
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(Theme.Space.s)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 1)
+        )
+    }
+
+    private func horizontalAlignment(for column: Int) -> HorizontalAlignment {
+        guard column < table.alignments.count else { return .leading }
+        switch table.alignments[column] {
+        case .leading:  return .leading
+        case .center:   return .center
+        case .trailing: return .trailing
+        }
     }
 }
 
@@ -706,11 +1319,63 @@ private struct MarkdownLine: View {
     }
 }
 
+// MARK: - Dirty banner (GH-105)
+
+/// Slim single-row "BTW, this went dirty" nudge shown above card #1 — the
+/// single most-recently-touched dirty repo outside the top 5 (already picked
+/// server-side; this view only renders it). Deliberately lighter/friendlier
+/// than `OffRosterFooter` (accent tint, not warning) and never collapsible —
+/// it's a passive nudge, not a full list.
+struct DirtyBannerView: View {
+    let warning: OffRosterWarning
+
+    private var detail: String {
+        var bits: [String] = []
+        if warning.modifiedCount > 0 { bits.append("\(warning.modifiedCount) modified") }
+        if warning.untrackedCount > 0 { bits.append("\(warning.untrackedCount) untracked") }
+        return bits.isEmpty ? "uncommitted changes" : bits.joined(separator: ", ")
+    }
+
+    private var ago: String {
+        guard let ts = warning.myLocalCommitTs else { return "" }
+        return RelTime.ago(Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.attention)
+            Text(warning.repoName)
+                .font(Theme.bodyMed).foregroundStyle(Theme.text)
+            Text("left it dirty (\(detail))" + (ago.isEmpty ? "" : " — last commit \(ago)"))
+                .font(Theme.caption).foregroundStyle(Theme.text2)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                .strokeBorder(Theme.accent.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
 // MARK: - Off-roster footer (collapsible)
 
 struct OffRosterFooter: View {
     let warnings: [OffRosterWarning]
     @State private var expanded = false
+
+    private func detail(for warning: OffRosterWarning) -> String {
+        if let reason = warning.warningReason, !reason.isEmpty {
+            return reason
+        }
+        return "↑\(warning.ahead) · \(warning.modifiedCount)M \(warning.untrackedCount)U"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
@@ -728,10 +1393,17 @@ struct OffRosterFooter: View {
                 ForEach(warnings) { w in
                     HStack(spacing: Theme.Space.s) {
                         StatusDot(isDirty: w.isDirty, healthAvailable: true)
-                        Text(w.repoName).font(Theme.body).foregroundStyle(Theme.text).lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(w.repoName)
+                                .font(Theme.body)
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                            Text(detail(for: w))
+                                .font(Theme.caption)
+                                .foregroundStyle(Theme.text3)
+                                .lineLimit(1)
+                        }
                         Spacer(minLength: 0)
-                        Text("↑\(w.ahead) · \(w.modifiedCount)M \(w.untrackedCount)U")
-                            .font(Theme.monoSmall).foregroundStyle(Theme.text3)
                     }
                 }
             }

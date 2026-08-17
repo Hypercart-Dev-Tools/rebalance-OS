@@ -2,6 +2,8 @@
 
 This repo **is** an MCP server. Every refresh and query path is exposed through MCP tools — do not scan the codebase for `rebalance ...` CLI commands or write ad-hoc shell pipelines. Reach for the tools first.
 
+**"Find my recent work" queries.** When the user asks to find, summarize, or locate recent work/activity (what they've been doing, which project touched X recently, etc.), use `ask()`, `get_next_actions()`, `github_balance()`, `peek_source()`, or `publish_pulse()` — not Spotlight (`mdfind`) or ad-hoc filesystem search. The MCP's SQLite index is purpose-built for this and stays current via `refresh_index`. Reserve Spotlight/`find` for pure disk-location questions the registry doesn't track (e.g. "where did this repo get moved to on disk").
+
 > ### 🧭 Start here — the central orchestrator (the data-plane spine)
 >
 > Every data source — `vault`, `github`, `calendar`, `sleuth`, `email`, `semantic` — is registered as a `Collector` in **[src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py)** (`register_collector` / `COLLECTORS`). That registry **is** the central orchestrator of the system: `refresh_index`, `index_status`, and the daily-sync cron all dispatch through it, and adding a source is one `register_collector(...)` call — no edits to the dispatch chain. **To understand or extend this system, read `index_ops.py` first.**
@@ -59,7 +61,7 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - Registry: `{vault_path}/Projects/00-project-registry.md`
 - Config: `temp/rbos.config` (gitignored, repo root)
 - Database: resolved from `REBALANCE_DB` env var (set in `.vscode/mcp.json`)
-- Architecture docs: `PROJECT.md`, `MCP.md`
+- Architecture docs: `ARCHITECTURE.md`, `MCP.md`, `PROJECT/PDDA.md`
 
 **Background refresh.** A launchd job (`com.rebalance-os.daily-sync`) runs [scripts/daily_sync.sh](scripts/daily_sync.sh) at 6:30 AM daily and on boot. The script invokes the same `refresh_index(scope=["all"])` orchestration, so the cron and the MCP tool share one code path. If the index looks stale, check `temp/logs/daily_sync_YYYY-MM-DD.log` before manually re-running.
 
@@ -68,6 +70,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 **Source of truth for the orchestration:** [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py). Only edit there if you need to change refresh behavior — the MCP wrappers in `src/rebalance/mcp/` (25 tools across 7 domain modules; `mcp_server.py` is a 5-line backward-compat shim) and `daily_sync.sh` are thin and should stay that way.
 
 **Repo coverage.** `refresh_index(scope=["github"])` no longer requires every monitored repo to be in the active project registry. It auto-merges `project_repos ∪ activity_repos` (from `github_activity`, last 14 days) and skips `github_ignored_repos`. Use `list_watched_repos()` for the canonical view. The `refresh_index` orchestration and the `pulse` renderer both consume the same set, so a repo only has to appear once for everything downstream to see it.
+
+**Auto-promotion (GH-124).** `refresh_index(scope=["github"])` also auto-promotes a watched-but-unconfirmed repo into `project_registry` (as a `machine_owned` row, never overwriting a curated one) once the operator has authored `auto_promote_commit_threshold` commits to it (default 3; config in `config.py::get_auto_promote_config()`). So `list_projects()` can grow entries you never explicitly confirmed — check `custom_fields.provenance == "auto_promoted"` before assuming a project was hand-curated. Each promotion is surfaced non-silently: a `project_auto_promoted` event on `/auth-log` and a "New repo added" banner on the pulse dashboard's repo-activity chart.
 
 ## Communication & Documentation
 
@@ -92,7 +96,9 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 > For the *why* behind these rules, see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
 - Code: DRY, SOLID; balance maintainability, performance, secure. Comply with framework security best practices.
-- **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document state diagram in code comments or `/docs/state-machine.md`.
+- **Pre-flight Search Rule**: Before writing any new utility function or system layer, you MUST use `grep_search` or MCP `search_graph` to check if a similar function exists (e.g., date parsing, JSON handling). If it exists, import it. Do not duplicate it.
+- **Centralization Rule**: All standard data formatting and OS-level operations (like datetime parsing, json dumping, git calls) must use `src/rebalance/lib/*` modules instead of creating local helper methods in the collector.
+- **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document the state diagram in code comments, or in the owning `PROJECT/**` doc.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
 - **Pipelines**: One logical pipeline per data flow whenever possible. Avoid forking/rejoining; use filters, transforms, and side effects in sequence. If pipeline needs multiple paths, use conditional routing within single pipeline, not separate pipelines.
 - **Collectors, sources & write paths** (see `PROJECT/2-WORKING/COLLECTOR-PATH-AND-PORTABILITY-AUDIT.md`):
@@ -167,6 +173,24 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 - Audit deps weekly (`safety check`, Dependabot).
 - Rate limit APIs; exponential backoff on 429s.
+
+### 3-Eyes — the local job supervisor (read this before touching scheduled jobs)
+
+**3-Eyes is the sentinel system for this machine's scheduled jobs.** It supersedes the earlier
+Cactus-Needle sentinel, which was disabled on 2026-07-27 (its four `com.neochro.*` launchd agents
+are parked in `~/Library/LaunchAgents/.disabled-cactus-sentinel-2026-07-27/`). Do not reintroduce a
+second supervisor — one machine, one sentinel.
+
+- **Code:** `utils/3-eyes/` · **Plan:** [PROJECT/2-WORKING/GH-195-UNIFIED-SENTINEL.md](PROJECT/2-WORKING/GH-195-UNIFIED-SENTINEL.md)
+- **Status / inventory:** `cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status`
+- **Skill:** `/3-eyes` for job health; `/launchd-triage` for raw launchd triage beneath it
+- **Inert by default.** A clone without a gitignored `config/runtime.env` is a clean no-op —
+  "3-Eyes says nothing" on a fresh machine means *not activated*, not *nothing wrong*.
+
+**Known gap (2026-07-27): the registry does not match reality.** `registry/jobs.d/` lists
+`collector-health` and `selfcheck`, but `3eyes.skill-sync` is loaded in launchd and firing every
+120 s without a registry entry. A supervisor that doesn't know about one of its own jobs is the
+condition 3-Eyes exists to prevent — reconcile before trusting its inventory.
 
 ## Phase 0 Technical Spikes
 

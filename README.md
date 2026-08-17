@@ -1,4 +1,84 @@
-> Your workday "OS"
+# rebalance
+
+## MOVED
+We've moved to a new repo:
+[We're now a part of the HiQS Suite](https://github.com/HiQS-Suite/rebalanceOS).
+
+> **Turn workplace noise into high-quality signal.**
+> Your workday "OS" — local-first, and part of the [HiQS](https://beta.hiqs.ai) suite.
+
+**Status: Beta.** Shipping weekly. We tell you what's real, and what isn't yet — see
+[Maturity](#maturity) below for the parts that aren't.
+
+---
+
+## HiQS — the system this belongs to
+
+**HiQS** captures the firehose from Slack, GitHub, email and calendars, computes attested, ranked,
+structured signals, and coordinates action across humans and AI agents — without forcing migration
+or overpromising.
+
+It targets four failure modes of modern work, all of which come from the same root: work bounces
+between tools while context evaporates.
+
+| | |
+|---|---|
+| **Missed priorities** | The important thing was in a channel you had muted |
+| **Coordination friction** | Everyone re-derives the same state from scratch |
+| **Slow decisions** | The evidence exists, in six places, in six formats |
+| **Agent starvation** | Your AI agents cannot see the work, so they cannot help with it |
+
+### Three products, one pipeline
+
+| Product | Stage | What it does |
+|---|---|---|
+| **Sleuth** | Live | The gateway for Slack signal. Reaction-based reminders with bi-directional sync to Slack's native Lists. |
+| **Rebalance** | **Beta — this repo** | The intake and signal-compute engine. Aggregates every source into one local store and ranks what matters. |
+| **Forge** | Early | Multi-agent coordination: Claude, Codex and Gemini working as a team — build in parallel, review in a loop. |
+
+**rebalance is the intake and compute layer.** Everything it ingests stays on your machine, in one
+SQLite database you own. Nothing is uploaded, and nothing requires you to migrate off the tools you
+already use.
+
+---
+
+## Maturity
+
+Honesty about state is a feature, not a disclaimer. What is real today:
+
+| Component | State | Notes |
+|---|---|---|
+| Vault, GitHub, git-history, calendar and email ingest | **Beta** | Daily-driven; this is the core |
+| MCP server and the `ask` / semantic surfaces | **Beta** | Semantic search needs Apple Silicon; everything else is cross-platform |
+| Local dashboards and reports | **Beta** | |
+| Signal-agnostic prioritization | **In progress** | Aggregates per-project counts; not yet the ranked view described above |
+| `utils/3-eyes/` job supervisor | **Alpha — not fully working** | Diagnostic tool, outside the supported core. Known defect: `pause` does not stop a launchd-managed job. Use `launchctl bootout` and verify. |
+| `experimental/` | **Experimental** | Exactly what it says |
+
+---
+
+## Platform support
+
+| Platform | State |
+|---|---|
+| **Apple Silicon macOS** | **Supported.** Developed and tested here daily. Everything works, including semantic search. |
+| Intel macOS | Expected to work except `[embeddings]` (MLX is Apple-Silicon-only). Not routinely tested. |
+| **Linux** | **Work in progress — do not expect a clean install yet.** |
+| Windows | Untested. |
+
+**On Linux specifically**, so you can judge the gap rather than discover it:
+
+- Stock `ubuntu:22.04` and `ubuntu:24.04` container images have **no `python3` on `PATH` at
+  all** — the version check above fails with `command not found` before anything else runs.
+- Ubuntu 24.04 provides Python **3.12.3**, which clears the floor; `apt install python3-venv`
+  is enough to get `python3` and `venv`.
+- Ubuntu 22.04 ships Python 3.10, **below the floor**, and `python3.12` is not in its
+  archive — a third-party source such as the deadsnakes PPA is required. Untested by us.
+- `[embeddings]` is unavailable on any non-Apple-Silicon platform, so semantic search and
+  `ask` retrieval are out; the rest of the product is not.
+
+None of this is a promise that the remainder installs cleanly on Linux. It is what we
+measured, and we would rather say so than let you find out at step three.
 
 ---
 
@@ -168,7 +248,7 @@ The result is an AI assistant that actually knows your work — because it's rea
 | [UPGRADE.md](./UPGRADE.md) | Keyring credential model + multi-device upgrade steps |
 | [DASHBOARD.md](./DASHBOARD.md) | Local web/activity dashboard |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and data flow |
-| [PROJECT.md](./PROJECT.md) · [PROJECT/](./PROJECT/README.md) | Execution source-of-truth and the plan-doc index |
+| [PROJECT/PDDA.md](./PROJECT/PDDA.md) · [ROADMAP.md](./ROADMAP.md) | Plan-doc contract and the pointer ledger indexing every active effort |
 | [AGENTS.md](./AGENTS.md) | Conventions for AI agents working in this repo |
 | [macOS/Apps/Focus5Float/README.md](./macOS/Apps/Focus5Float/README.md) | Focus 5 Float macOS app — build, install, binary path setup (`pipx`), self-checks |
 
@@ -224,15 +304,34 @@ download is the only large transfer and happens once.
 
 ### Step 1 — Clone and install
 
+> **macOS is the supported platform today.** rebalance is developed and tested on Apple
+> Silicon macOS. The core is pure Python and there is nothing macOS-specific about most of
+> it, but **Linux and Windows support is work in progress and unverified** — see
+> [Platform support](#platform-support) below before you start.
+
+**Check your Python first.** rebalance needs **3.12 or newer**:
+
 ```bash
-git clone https://github.com/Hypercart-Dev-Tools/rebalance-OS.git
-cd rebalance-OS
-/opt/homebrew/bin/python3.13 -m venv .venv
+python3 --version
+```
+
+If that prints 3.11 or lower, or `command not found`, install a newer Python and use it
+below in place of `python3`. On macOS: `brew install python@3.13`.
+
+```bash
+git clone https://github.com/HiQS-Suite/rebalanceOS.git
+cd rebalanceOS
+python3 -m venv .venv
 .venv/bin/pip install -e ".[embeddings,calendar]"
 ```
 
 > On Linux / Windows / Intel Mac, drop the `embeddings` extra:
 > `pip install -e ".[calendar]"` (semantic search will be unavailable; everything else works).
+
+> **To run the test suite**, add the `dev` extra — it is not included above:
+> `.venv/bin/pip install -e ".[dev]"`, then `.venv/bin/pytest tests/` from the repo root.
+> Run it from the repo root; `pytest` invoked from inside `src/rebalance/` puts that
+> directory on `sys.path`, where the local `mcp/` package shadows the installed MCP SDK.
 
 ### Step 2 — Ingest your vault
 
@@ -243,6 +342,43 @@ cd rebalance-OS
 # Generate vault embeddings
 .venv/bin/rebalance ingest embed --database rebalance.db
 ```
+
+> **Embedding runs under a memory guard (GH-172).** Embedding is the heaviest
+> local job in this project — it loads a Qwen model and holds vectors resident.
+> Every embedding pass therefore takes a **single-instance lock** and runs under a
+> **memory ceiling** (default: 35% of physical RAM), so a second run cannot stack
+> on a first and exhaust the machine. This is on by default with nothing to
+> install.
+>
+> If a run exits with "job 'rebalance-embed' is already running", that is the
+> guard working — another embed (often a scheduled `daily-sync`) holds the lock.
+> Wait, or re-run with `REBALANCE_JOB_GUARD_ON_CONFLICT=replace` to take over.
+>
+> Verify it is active, and tune it per machine:
+>
+> ```bash
+> .venv/bin/python -c "from rebalance.ingest import _job_guard as g; print(g.available(), g.enabled())"
+> # -> True True
+> ```
+>
+> Every guarded run also appends its peak memory to `temp/logs/job_rss.jsonl`,
+> so if a job ever does exhaust the machine you can tell **which** one it was —
+> the incident that motivated this (GH-172) was hard to attribute precisely
+> because macOS records only the process name `Python`.
+>
+> Full reference, tuning variables, and the non-editable-install caveat:
+> [UPGRADE.md § Embedding job guard](./UPGRADE.md#embedding-job-guard-gh-172--verify-on-every-device).
+> On a machine with substantially less than 64 GB RAM, set
+> `REBALANCE_JOB_GUARD_MAX_RSS_GB` explicitly rather than relying on the fraction.
+
+> **If you install the scheduled jobs**, note that the plist templates in
+> `scripts/` set `Nice=5` on batch jobs and use a deliberately de-collided
+> schedule — no two jobs fire in the same minute. `pulse-web-sync` in particular
+> must not share a slot with `pulse-sync`: it is a derived read-only stage over
+> what `pulse-sync` writes, so a shared minute risks reading half-written state.
+> Install via the per-job `scripts/install_*_scheduler.sh` scripts; there is no
+> single install-everything script. Details:
+> [UPGRADE.md § Re-render your launchd plists](./UPGRADE.md#re-render-your-launchd-plists-gh-175--required-on-existing-devices).
 
 ### Step 3 — Connect GitHub
 
@@ -277,7 +413,13 @@ You can still use the source-specific commands:
 
 ### Step 4 — Connect Google Calendar (optional)
 
-OAuth Desktop app credentials are already bundled in the repo. You do **not** need to create a Google Cloud project or download a `client_secret.json`.
+You supply your own OAuth client — rebalance does not bundle one, so your organization
+owns the consent screen, scopes, quota and revocation. It is a five-minute, one-time
+setup in the Google Cloud Console: enable the Calendar API, create a **Desktop app**
+OAuth client, and save the downloaded JSON as `~/secrets/google_oauth_client.json` (or
+point `GOOGLE_OAUTH_CLIENT_FILE` at it). Full walkthrough in
+[GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md); expected file shape in
+[`google_oauth_client.example.json`](./google_oauth_client.example.json).
 
 **4a. Install with calendar support**
 
@@ -513,8 +655,9 @@ The query wrapper pins `--db-path` to the committed portable DB, so it works on 
 Notes:
 - The wrapper now defaults to `--mode all` if you omit `--mode`, but keeping it explicit in maintainer docs is still clearer.
 - `--no-architecture-md` is intentional: the curated [ARCHITECTURE.md](ARCHITECTURE.md) is hand-edited and should not be regenerated.
-- For this repo's `qwen-local` harness, the wrapper now auto-applies the stable macOS settings: `TOKENIZERS_PARALLELISM=false`, `ASK_SELF_QWEN_BATCH_SIZE=8`, `ASK_SELF_QWEN_MAX_TOKENS=2048`, and `--concurrency 1` when you do not pass one explicitly.
-- Embedding is local (`qwen-local` with Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query. Install `sentence-transformers` in the external ask-self venv if you are refreshing from a new machine.
+- Embedding is **Gemini** (`gemini-embedding-001`, dim 768), set in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json) since commit `4ef8c39`. `GOOGLE_API_KEY` is required for **both** ingest and query — query-time embedding needs it too, not just synthesis.
+- The wrapper no longer auto-applies `qwen-local` tuning (`TOKENIZERS_PARALLELISM`, `ASK_SELF_QWEN_BATCH_SIZE`, `ASK_SELF_QWEN_MAX_TOKENS`, `--concurrency 1`); that path was dead under the Gemini harness and was removed. If you switch the harness back to a local Qwen provider, set those explicitly — the defaults are not memory-safe on this machine (see #172).
+- Switching provider changes the embedding dimension, which forces a **full index rebuild**. That is the heaviest local job in the repo; do not flip it casually.
 - PR ingestion now fails loudly if neither `GITHUB_TOKEN` / `SLEUTH_RAG_GITHUB_PAT` nor a healthy `gh auth login` is available. Pass `--no-prs` only if you intentionally want a files-only refresh.
 - Synthesis (the answer step) still defaults to Gemini unless you pass `--retrieval-only` or configure a local synthesis provider in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json).
 

@@ -19,7 +19,7 @@ cd "$PKG_DIR"
 APP_NAME="Focus 5 Float"
 EXEC_NAME="Focus5Float"
 BUNDLE_ID="me.neochro.Focus5Float"
-VERSION="0.49.0"
+VERSION="0.50.3"
 DIST="$PKG_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 

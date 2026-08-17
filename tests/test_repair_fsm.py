@@ -17,15 +17,20 @@ def _fail(error: str = "transient failure") -> RepairResult:
     return RepairResult(ok=False, error=error)
 
 def _make_fsm(actions: dict, *, preferred: str | None = None, api_key: str | None = None, max_det: int = 2, max_llm: int = 1) -> RepairFSM:
-    return RepairFSM(
-        actions=actions,
-        action_descriptions={k: k for k in actions},
-        preferred_action=preferred,
-        error_context="test context",
-        max_deterministic_attempts=max_det,
-        max_llm_attempts=max_llm,
-        llm_api_key=api_key,
-    )
+    # Hermetic: RepairFSM.__init__ does `llm_api_key or get_gemini_api_key()`, so
+    # a bare api_key=None would otherwise resolve an AMBIENT machine key (env /
+    # key file / gcloud). These are "no network" unit tests — pin the resolver to
+    # None during construction so api_key=None genuinely means "no key".
+    with patch("rebalance.repair.get_gemini_api_key", return_value=None):
+        return RepairFSM(
+            actions=actions,
+            action_descriptions={k: k for k in actions},
+            preferred_action=preferred,
+            error_context="test context",
+            max_deterministic_attempts=max_det,
+            max_llm_attempts=max_llm,
+            llm_api_key=api_key,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,4 @@
+module Clibgit2 {
+    header "clibgit2_shim.h"
+    export *
+}

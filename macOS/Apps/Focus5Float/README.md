@@ -13,9 +13,11 @@ renders JSON.
 
 ## Prerequisite
 
-**`rebalance serve` must be running** (default `http://localhost:8787`). The app
-polls `GET /focus-5.json` from it. With the server down, the app shows the last
-cached roster and an offline badge; it can start the server for you.
+The app first tries **`rebalance serve`** (`http://localhost:8787`) and, if that
+is unavailable, falls back to the always-on **pulse server**
+(`http://127.0.0.1:8767`) for the mirrored Focus 5 routes. With both servers
+down, the app shows the last cached roster and an offline badge; it can start
+`rebalance serve` for you.
 
 ### Making `rebalance` findable (required for "Start server")
 
@@ -84,7 +86,10 @@ An icon is included at `Resources/AppIcon.icns` (wired automatically by
 `make-app.sh`). A menu-bar agent has no Dock icon, so it only appears in
 Finder / Spotlight.
 
-To replace the icon: export a new 1024×1024 PNG, convert it to
+To replace the icon: export a new 1024×1024 PNG with the visible artwork inside
+a centered 824×824 region (100 px of transparent margin on every edge). The
+margin is part of the macOS optical-size contract; full-bleed artwork appears
+larger than neighboring Dock and app-switcher icons. Convert the padded PNG to
 `Resources/AppIcon.icns`, and re-run `./make-app.sh`:
 
 ```bash
@@ -113,5 +118,6 @@ intentionally **not** reusable by any remote mirror without a sanitized projecti
 
 Configurable via environment, not a settings window (YAGNI for a personal tool):
 
-- `FOCUS5_BASE_URL` — server base URL (default `http://localhost:8787`, gated to
-  loopback unless a debug build).
+- `FOCUS5_BASE_URL` — server base URL override. When unset, the app probes
+  `http://localhost:8787` first, then `http://127.0.0.1:8767`. The override is
+  loopback-gated unless a debug build.

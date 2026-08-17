@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-139-health-issue-reporter-stable-id .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact scripts/health_issue_reporter.py,tests/test_health_issue_reporter.py \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k health_issue_reporter -q' \
+  --require-clean

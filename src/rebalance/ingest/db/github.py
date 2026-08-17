@@ -247,6 +247,140 @@ def upsert_commit(conn: sqlite3.Connection, values: tuple) -> None:
     )
 
 
+def insert_push_event(conn: sqlite3.Connection, values: tuple) -> bool:
+    """Insert one direct-push receipt; return whether it was newly observed."""
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO github_push_events
+            (event_id, repo_full_name, ref, before_sha, head_sha, observed_at,
+             state, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+        """,
+        values,
+    )
+    return cursor.rowcount == 1
+
+
+def pending_push_events(
+    conn: sqlite3.Connection, limit: int, max_attempts: int
+) -> list[sqlite3.Row]:
+    """Oldest direct-push receipts still requiring bounded enrichment."""
+    return conn.execute(
+        """
+        SELECT event_id, repo_full_name, ref, before_sha, head_sha, observed_at,
+               state, attempt_count
+        FROM github_push_events
+        WHERE state IN ('pending', 'deferred') AND attempt_count < ?
+        ORDER BY observed_at ASC, event_id ASC
+        LIMIT ?
+        """,
+        (max_attempts, limit),
+    ).fetchall()
+
+
+def update_push_event(
+    conn: sqlite3.Connection,
+    event_id: str,
+    *,
+    state: str,
+    now: str,
+    reason: str = "",
+    deferral_kind: str | None = None,
+) -> None:
+    """Advance a receipt state without hiding its prior observation.
+
+    ``attempt_count`` counts ATTEMPTS, not visits (GH-169). A deferral with
+    ``deferral_kind='budget'`` means the run exhausted its own per-refresh cap
+    before reaching this event — nothing was tried, so nothing is charged.
+
+    The previous unconditional ``attempt_count + 1`` charged those too, and
+    ``pending_push_events()`` filters ``attempt_count < MAX_EVENT_ATTEMPTS``.
+    An event that merely lost the cap lottery three times was therefore evicted
+    permanently, never fetched, and never reported as lost — 20 real events on
+    the live DB, every one of them for "compare cap reached". Genuine failures
+    still cost an attempt, so a non-retryable error still stops retrying.
+    """
+    charge = 0 if deferral_kind == "budget" else 1
+    conn.execute(
+        """
+        UPDATE github_push_events
+        SET state = ?, attempt_count = attempt_count + ?, last_attempt_at = ?,
+            resolved_at = CASE WHEN ? IN ('enriched', 'ignored', 'head_only', 'failed')
+                               THEN ? ELSE resolved_at END,
+            failure_reason = ?,
+            deferral_kind = ?
+        WHERE event_id = ?
+        """,
+        (state, charge, now, state, now, reason[:500] or None, deferral_kind, event_id),
+    )
+
+
+def upsert_direct_commit(
+    conn: sqlite3.Connection, values: tuple, *, source: str = "events"
+) -> None:
+    """Insert-or-replace a direct commit while retaining its event provenance.
+
+    ``path_coverage`` is RATCHETED, never assigned (GH-169): it may only move
+    ``unavailable -> complete``. The previous unconditional
+    ``path_coverage=excluded.path_coverage`` meant a later cap-starved API pass
+    — which writes ``unavailable`` when it runs out of detail budget — could
+    silently *downgrade* a row that already had a full file list, turning
+    collected data back into a gap. That is what makes backfill-then-enrich
+    ordering safe: whichever path runs second cannot destroy the other's work.
+    """
+    conn.execute(
+        """
+        INSERT INTO github_direct_commits
+            (repo_full_name, sha, event_id, ref, author_login, author_name,
+             message, committed_at, html_url, path_coverage, discovered_at,
+             fetched_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(repo_full_name, sha) DO UPDATE SET
+            event_id=excluded.event_id, ref=excluded.ref,
+            author_login=excluded.author_login, author_name=excluded.author_name,
+            message=excluded.message, committed_at=excluded.committed_at,
+            html_url=excluded.html_url,
+            path_coverage=CASE
+                WHEN github_direct_commits.path_coverage = 'complete' THEN 'complete'
+                ELSE excluded.path_coverage
+            END,
+            source=CASE
+                WHEN github_direct_commits.path_coverage = 'complete'
+                     THEN github_direct_commits.source
+                ELSE excluded.source
+            END,
+            fetched_at=excluded.fetched_at
+        """,
+        (*values, source),
+    )
+
+
+def replace_direct_commit_files(
+    conn: sqlite3.Connection, repo_full_name: str, sha: str, files: list[dict[str, object]]
+) -> None:
+    """Replace the exact file list for one direct commit atomically."""
+    conn.execute(
+        "DELETE FROM github_direct_commit_files WHERE repo_full_name = ? AND sha = ?",
+        (repo_full_name, sha),
+    )
+    conn.executemany(
+        """
+        INSERT INTO github_direct_commit_files
+            (repo_full_name, sha, path, status, additions, deletions, changes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                repo_full_name, sha, str(row.get("filename") or ""),
+                str(row.get("status") or ""), row.get("additions"),
+                row.get("deletions"), row.get("changes"),
+            )
+            for row in files
+            if row.get("filename")
+        ],
+    )
+
+
 def upsert_check_run(conn: sqlite3.Connection, values: tuple) -> None:
     """Insert-or-replace one ``github_check_runs`` row.
 
@@ -320,6 +454,66 @@ def insert_github_document(
         ),
     )
     return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+
+def upsert_github_document(
+    conn: sqlite3.Connection,
+    *,
+    repo_full_name: str,
+    source_type: str,
+    source_number: int,
+    doc_type: str,
+    source_key: str,
+    title: str,
+    body: str,
+    content_hash: str,
+    updated_at: str,
+    fetched_at: str,
+) -> int:
+    """Insert or update a ``github_documents`` row, preserving ``embedded_hash`` if unchanged.
+
+    Returns the new or existing row id.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO github_documents
+            (repo_full_name, source_type, source_number, doc_type, source_key,
+             title, body, content_hash, embedded_hash, updated_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(source_key) DO UPDATE SET
+            repo_full_name=excluded.repo_full_name,
+            source_type=excluded.source_type,
+            source_number=excluded.source_number,
+            doc_type=excluded.doc_type,
+            title=excluded.title,
+            body=excluded.body,
+            embedded_hash=NULL,
+            content_hash=excluded.content_hash,
+            updated_at=excluded.updated_at,
+            fetched_at=excluded.fetched_at
+        WHERE github_documents.content_hash != excluded.content_hash
+        RETURNING id
+        """,
+        (
+            repo_full_name,
+            source_type,
+            source_number,
+            doc_type,
+            source_key,
+            title,
+            body,
+            content_hash,
+            updated_at,
+            fetched_at,
+        ),
+    )
+    row = cursor.fetchone()
+    if row is not None:
+        return int(row[0])
+    return int(conn.execute(
+        "SELECT id FROM github_documents WHERE source_key = ?",
+        (source_key,)
+    ).fetchone()[0])
 
 
 def delete_item_children(
@@ -476,8 +670,9 @@ def upsert_github_embedding(
     conn: sqlite3.Connection, doc_id: int, embedding: bytes
 ) -> None:
     """Insert-or-replace one ``github_embeddings`` vector row."""
+    conn.execute("DELETE FROM github_embeddings WHERE doc_id = ?", (doc_id,))
     conn.execute(
-        "INSERT OR REPLACE INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
+        "INSERT INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
         (doc_id, embedding),
     )
 
@@ -498,6 +693,54 @@ def set_github_embedding_meta(
         "INSERT OR REPLACE INTO github_embedding_meta (key, value) VALUES (?, ?)",
         (key, value),
     )
+
+
+def count_orphaned_embeddings(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Count orphaned github_embeddings and estimate their wasted bytes.
+
+    Returns (orphan_count, estimated_wasted_bytes).
+    """
+    count = conn.execute(
+        """
+        SELECT COUNT(*) FROM github_embeddings e
+        WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = e.doc_id)
+        """
+    ).fetchone()[0]
+    wasted = 0
+    if count > 0:
+        row = conn.execute(
+            """
+            SELECT LENGTH(embedding) FROM github_embeddings e
+            WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = e.doc_id)
+            LIMIT 1
+            """
+        ).fetchone()
+        if row and row[0]:
+            wasted = count * row[0]
+    return count, wasted
+
+
+def count_unembedded_documents(conn: sqlite3.Connection, min_chars: int) -> int:
+    """Count github_documents needing (re-)embedding."""
+    return conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM github_documents
+        WHERE LENGTH(body) >= ?
+          AND (embedded_hash IS NULL OR embedded_hash != content_hash)
+        """,
+        (min_chars,),
+    ).fetchone()[0]
+
+
+def table_byte_size(conn: sqlite3.Connection, table_name: str) -> int:
+    """Return the total byte size of a table using dbstat."""
+    try:
+        return conn.execute(
+            "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE ?", (f"{table_name}%",)
+        ).fetchone()[0] or 0
+    except sqlite3.OperationalError:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -587,3 +830,16 @@ def delete_github_embeddings_for_docs(
         "DELETE FROM github_embeddings WHERE doc_id = ?",
         [(doc_id,) for doc_id in doc_ids],
     )
+
+
+def delete_github_documents(conn: sqlite3.Connection, doc_ids: list[int]) -> None:
+    """Delete vectors and then documents for the given document ids."""
+    if not doc_ids:
+        return
+    delete_github_embeddings_for_docs(conn, doc_ids)
+    for i in range(0, len(doc_ids), 900):
+        chunk = doc_ids[i:i + 900]
+        conn.executemany(
+            "DELETE FROM github_documents WHERE id = ?",
+            [(doc_id,) for doc_id in chunk],
+        )

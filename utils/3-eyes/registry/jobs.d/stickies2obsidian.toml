@@ -1,0 +1,18 @@
+# 3-Eyes adoption of the in-repo Stickies-to-Obsidian importer (GH-195 P8 Wave 2).
+# The incumbent label is com.user.* but the executable is a portable repo script,
+# so this declaration belongs in the committed registry rather than a local overlay.
+
+id = "stickies2obsidian"
+command = "stickies2obsidian"
+description = "Import changed macOS Stickies into Obsidian every five minutes."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.user.stickies2obsidian"]
+
+[schedule.launchd]
+StartInterval = 300
+
+[breakers]
+single_instance = true
+max_rss_gb = 8
+trip_after_failures = 3

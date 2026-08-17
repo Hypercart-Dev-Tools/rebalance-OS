@@ -1,0 +1,142 @@
+# MARATHON.yaml — 2026-07-18 collector health bundle
+#
+# STATUS (added 2026-07-21, doc-hygiene pass): COMPLETE. All 4 phases fired and merged to
+# development via PR #147 ("Collector health bundle: #139 #144 #138 #127 #145 (+#141
+# diagnosed)", merged 2026-07-19T01:32:52Z). This directory sat in 2-WORKING unarchived —
+# no prior status comment claimed otherwise, it just never got moved. Archived to
+# PROJECT/3-COMPLETED/ 2026-07-21.
+#
+# Run:
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/MARATHON.yaml \
+#     --pre-advance-cmd '<see per-phase gate note below>'
+#
+# Triage:  PROJECT/1-INBOX/MARATHON-TRIAGE-2026-07-18.md
+# Branch:  marathon/2026-07-18-collectors (cut from development @ 961da06)
+#
+# ---------------------------------------------------------------------------
+# WHY THESE PHASES, IN THIS ORDER
+# ---------------------------------------------------------------------------
+# Write-sets were verified against the tree, not inferred from issue titles. The
+# artifact per phase is the real contended file:
+#
+#   p1 (#139) scripts/health_issue_reporter.py   <- disjoint
+#   p2 (#144) src/rebalance/ingest/_http.py      <- disjoint
+#   p3 (#138) src/rebalance/doctor.py            <- disjoint from p1/p2
+#   p4 (#127) src/rebalance/doctor.py            <- COLLIDES with p3, must follow it
+#
+# p1..p3 are mutually disjoint; p4 shares doctor.py with p3 and is sequenced
+# after it via depends_on.
+#
+# CORRECTION (2026-07-18, before first fire): an earlier draft of this header
+# claimed p1..p3 would "run concurrently, 3 lanes then 1". That is not something
+# this harness does. marathon.sh resolves depends_on order and then runs each
+# phase through marathon-drive.sh ONE AT A TIME, halting on the first failure
+# (see its header, and `--dry-run`, which reports "4 phase(s) would run in
+# order"). There is no wave/parallel/worktree machinery anywhere in it.
+#
+# The disjoint write-set analysis is still load-bearing — it is why p4 must
+# declare depends_on and the others need not — but it buys correctness, not
+# wall-clock. Sequential execution is also what makes the run safe to supervise
+# from this working tree: exactly one agent writes at a time.
+#
+# An earlier draft of the triage put all three health lanes on doctor.py and
+# concluded only one pair could run concurrently. That was wrong: #139's fix
+# deletes a duplicate check emitter from the REPORTER (which screen-scrapes
+# fixed-width columns off git-pulse stdout at health_issue_reporter.py:360-382)
+# and lets doctor's canonical `pulse collector:*` checks flow through. doctor.py
+# is not edited by p1.
+#
+# ---------------------------------------------------------------------------
+# GATE (read before firing — this halted GH-135 p2 AFTER it was approved)
+# ---------------------------------------------------------------------------
+# marathon-drive's pre-advance gate defaults to `bash <root>/validate.sh`, which
+# DOES NOT EXIST in this repo. Always pass an explicit --pre-advance-cmd.
+#
+# Do NOT gate on `pytest tests/`: the suite has 15 pre-existing failures
+# (test_auto_promote.py, test_hiqs_pipeline.py, test_project_inference.py and
+# others — baseline confirmed 2026-07-18 by stashing an unrelated change and
+# re-running: identical counts). A full-suite gate fails on unrelated debt and
+# blocks every phase.
+#
+# --pre-advance-cmd is ONE command for the whole run, not per-phase. The
+# `# gate:` notes on each phase below are therefore documentation of intent, not
+# wiring — nothing reads them. The actual gate is the union of all four scoped
+# selectors, verified green at baseline on 2026-07-18 (178 passed, 10 skipped,
+# 0 failed) before the first fire:
+#
+#   .venv/bin/python -m pytest tests/ \
+#     -k "doctor or health or freshness or scheduler_policy or github_scan or http" -q
+#
+# depends_on is a SCALAR, not a list. `depends_on: [phase-id]` parses as the
+# literal string "[phase-id]" and fails with "depends_on unknown phase" — this
+# plan shipped with that bug and was caught by --dry-run before firing.
+#
+# ---------------------------------------------------------------------------
+# BUILDER / COST
+# ---------------------------------------------------------------------------
+# Builder defaults to `codex` (subscription-billed). Reviewer `agy` is the other
+# cost-blind option. Neither bills the Anthropic API per turn. `--builder claude`
+# would spawn API-billed headless turns — not used here.
+
+name: marathon-2026-07-18-collectors
+
+phases:
+
+  # --- WAVE 1 — p1..p3 are disjoint and may run concurrently ---------------
+
+  - id: coll-p1-139-dupe-emitter
+    name: "GH-139: delete the duplicate pulse-collector check emitter"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p1-139-dupe-emitter.md
+    artifact: scripts/health_issue_reporter.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/test_health_issue_reporter.py -q
+
+  - id: coll-p2-144-fanout
+    name: "GH-144: client-level request attribution + reduce per-PR fan-out"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p2-144-fanout.md
+    artifact: src/rebalance/ingest/_http.py
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "github_scan or github_client or http" -q
+
+  - id: coll-p3-138-job-liveness
+    name: "GH-138: doctor warns when a SCHEDULER.md job is not loaded"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p3-138-job-liveness.md
+    artifact: src/rebalance/doctor.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "doctor or scheduler_policy" -q
+
+  # --- WAVE 2 — shares doctor.py with p3, must follow it -------------------
+
+  - id: coll-p4-127-health-predicate
+    name: "GH-127: registry-driven content/volume health predicate"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p4-127-health-predicate.md
+    artifact: src/rebalance/doctor.py
+    depends_on: coll-p3-138-job-liveness
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+    # gate: .venv/bin/python -m pytest tests/ -k "doctor or health or freshness" -q
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT IN THIS PLAN
+# ---------------------------------------------------------------------------
+# #141 (email collector, 0 rows in 7d) — root cause unknown. Three candidate
+# causes (fetching-and-discarding / fetching-nothing / failing-silently) have
+# different write-sets, so any artifact declared now would be a placeholder.
+# Diagnose first, then contract. Deferred at the operator's direction.
+#
+# #140 — closed 2026-07-18 as investigation-complete; its actionable remainder
+# is #144 (p2 above).
+#
+# GH-139's stable-id guard — the registry-level stable check id decided on the
+# issue (option 2, per Principle 2) is NOT p1. p1 removes the duplicate emitter,
+# which is the cure; the stable id is the guard against the next drift and would
+# edit doctor.py's check emission, colliding with p3 and p4. Sequence it after
+# p4 as a follow-up phase once doctor.py is stable.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Auto-file GitHub issues for failing rebalance health checks.
 
-Runs ``rebalance doctor`` + (optionally) the git-pulse collector health check,
-then creates/closes GitHub issues on ``Hypercart-Dev-Tools/rebalance-OS`` so
+Runs ``rebalance doctor``, then creates/closes GitHub issues on
+``Hypercart-Dev-Tools/rebalance-OS`` so
 failures are tracked in the project backlog without manual triage.
 
 Logging
@@ -12,8 +12,14 @@ the full check results, every LLM call + response, and every GitHub action taken
 
 De-duplication
 --------------
-Issues are matched by stable title (``health: <check-name>``).
-- Already **open**: skip silently.
+Issues are matched by a stable check id (``Check.name`` from the doctor
+registry — see ``run_doctor_checks()``), not by the GitHub issue *title*.
+The id is embedded as a hidden ``<!-- health-check-id: ... -->`` marker in
+the issue body at file time, so a human retitling the issue on GitHub (or a
+future change to ``ISSUE_TITLE_PREFIX``) can no longer orphan it. Issues
+filed before this marker existed are still matched by parsing the check name
+out of their title (GH-139 legacy fallback) — see ``dedup_key_for_issue()``.
+- Already **open**: refresh the Detail block and bump the occurrence counter.
 - Recently **closed** (within --dedup-days, default 30): add a comment noting
   the recurrence instead of opening a new issue.
 - Older closed / never filed: file a new issue.
@@ -38,7 +44,7 @@ Usage
 
 Options
 -------
-    --also-pulse            Include git-pulse collector checks
+    --also-pulse            Deprecated compatibility flag; collector checks are in doctor
     --warn                  File issues for WARN findings too (default: FAIL only)
     --close                 Close issues whose checks have recovered
     --llm-triage            Ask an LLM whether each finding is worth filing
@@ -59,7 +65,6 @@ import json
 import os
 import re
 import socket
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -234,7 +239,7 @@ def list_health_issues(token: str, repo: str, state: str = "open",
         if not isinstance(results, list) or not results:
             break
         for issue in results:
-            issues[issue["title"]] = issue
+            issues[dedup_key_for_issue(issue)] = issue
         page += 1
     return issues
 
@@ -293,6 +298,78 @@ def set_occurrence_count(body: str, count: int, last_seen: str,
     return new_line + (body or "")
 
 
+# ---------------------------------------------------------------------------
+# Issue body — Detail block refresh
+#
+# _issue_body() writes the finding's Detail as a fenced code block:
+#   **Detail:**
+#   ```
+#   <detail text>
+#   ```
+#
+# Previously only set_occurrence_count() ran on a repeat sighting, so a
+# changed root-cause message on re-fire never reached the issue (GH-139).
+# set_detail() rewrites that block in place; everything else in the body
+# (title, status line, hint, footer, occurrence counter, check-id marker)
+# is left untouched.
+# ---------------------------------------------------------------------------
+
+_DETAIL_RE = re.compile(r"\*\*Detail:\*\*\n```\n.*?\n```", re.DOTALL)
+
+
+def set_detail(body: str, detail: str) -> str:
+    if not _DETAIL_RE.search(body or ""):
+        return body
+    replacement = f"**Detail:**\n```\n{detail}\n```"
+    return _DETAIL_RE.sub(lambda _m: replacement, body, count=1)
+
+
+# ---------------------------------------------------------------------------
+# Issue body — stable check-id marker (GH-139)
+#
+# Dedup used to key off the rendered GitHub issue *title*
+# (``f"{ISSUE_TITLE_PREFIX} {check['name']}"``), matched via exact string
+# equality against ``issue["title"]``. That title is mutable — a human can
+# retitle the issue on GitHub, or a future edit to ISSUE_TITLE_PREFIX (or to
+# a check's own registry name) changes the computed string — and either one
+# silently orphans the existing issue and files a duplicate under the new
+# title.
+#
+# Instead, every issue this script files carries a hidden marker line
+# embedding the check's stable registry id (``Check.name`` — see
+# ``run_doctor_checks()``, already the identifier used throughout the doctor
+# check registry, independent of any GitHub-side display text):
+#   <!-- health-check-id: <check-name> -->
+#
+# dedup_key_for_issue() reads that marker first. Issues filed before this
+# marker existed (e.g. the pre-GH-139 pulse-collector duplicates, #46-48 and
+# #83-85) have no marker, so it falls back to parsing the check name out of
+# the title — preserving today's matching behavior for those legacy issues
+# rather than re-duplicating or auto-touching them.
+# ---------------------------------------------------------------------------
+
+_CHECK_ID_RE = re.compile(r"^<!-- health-check-id: (.+?) -->\n?", re.MULTILINE)
+
+
+def check_id_marker(check_id: str) -> str:
+    return f"<!-- health-check-id: {check_id} -->\n"
+
+
+def parse_check_id(body: str) -> str | None:
+    m = _CHECK_ID_RE.search(body or "")
+    return m.group(1).strip() if m else None
+
+
+def dedup_key_for_issue(issue: dict) -> str:
+    """Stable dedup key for an existing GitHub issue — see module docstring."""
+    check_id = parse_check_id(issue.get("body") or "")
+    if check_id:
+        return check_id
+    title = issue.get("title") or ""
+    prefix = f"{ISSUE_TITLE_PREFIX} "
+    return title[len(prefix):] if title.startswith(prefix) else title
+
+
 def update_issue_body(
     token: str, repo: str, number: int, new_body: str, dry_run: bool
 ) -> None:
@@ -310,6 +387,7 @@ def _issue_body(check_name: str, status: str, detail: str, hint: str, source: st
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     parts = [
         f"> **Seen:** 1× · Last: {now} · Device: {DEVICE_NAME}\n",
+        check_id_marker(check_name),
         f"## Rebalance health: `{check_name}`\n",
         f"**Status:** `{status.upper()}`  ",
         f"**Detected:** {now}  ",
@@ -339,47 +417,6 @@ def run_doctor_checks() -> list[dict]:
          "hint": c.hint, "source": "rebalance-doctor"}
         for c in report.checks
     ]
-
-
-def run_pulse_checks(warn_hours: float = 3.0, alert_hours: float = 24.0) -> list[dict]:
-    script = _REPO_ROOT / "experimental" / "git-pulse" / "health-check.py"
-    if not script.exists():
-        print(f"  [pulse] script not found at {script}, skipping", file=sys.stderr)
-        return []
-    result = subprocess.run(
-        [sys.executable, str(script),
-         f"--warn-hours={warn_hours}", f"--alert-hours={alert_hours}"],
-        capture_output=True, text=True,
-    )
-    checks: list[dict] = []
-    for line in result.stdout.splitlines():
-        stripped = line.strip()
-        if (not stripped or stripped.startswith("Git Pulse")
-                or stripped.startswith("Now:") or stripped.startswith("-")):
-            continue
-        if len(line) < 56:
-            continue
-        device_name = line[:36].strip()
-        status_field = line[38:56].strip()
-        notes = line[60:].strip() if len(line) > 60 else ""
-        if not device_name or not status_field:
-            continue
-        if status_field.startswith(("ALERT", "DEGRADED", "NO PUSHES")):
-            level = "fail"
-        elif status_field.startswith("STALE"):
-            level = "warn"
-        else:
-            continue
-        detail = f"Collector '{device_name}': {status_field}"
-        if notes:
-            detail += f"\n{notes}"
-        checks.append({
-            "name": f"pulse-collector:{device_name}", "status": level,
-            "detail": detail,
-            "hint": "Check the collector's machine or the sync repo for errors.",
-            "source": "git-pulse-health-check",
-        })
-    return checks
 
 
 # ---------------------------------------------------------------------------
@@ -442,20 +479,46 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
-def _triage_anthropic(user_msg: str, model: str, api_key: str | None) -> dict:
-    try:
-        import anthropic  # noqa: PLC0415
-    except ImportError:
-        print("  [llm-triage] anthropic not installed; try: pip install anthropic", file=sys.stderr)
+def _triage_gemini(user_msg: str, model: str, api_key: str | None) -> dict:
+    import json as _json
+    import urllib.request
+    
+    if not api_key:
+        print("  [llm-triage] GEMINI_API_KEY is not set", file=sys.stderr)
         return {}
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-    msg = client.messages.create(
-        model=model or "claude-haiku-4-5-20251001",
-        max_tokens=256,
-        system=_TRIAGE_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
+        
+    model = model or "gemini-3.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    
+    body = _json.dumps({
+        "systemInstruction": {"parts": [{"text": _TRIAGE_SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+        "generationConfig": {"maxOutputTokens": 256, "responseMimeType": "application/json"}
+    }).encode()
+    
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
     )
-    raw = _strip_code_fence(msg.content[0].text)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode())
+    except Exception as exc:
+        print(f"  [llm-triage] gemini api error: {exc}", file=sys.stderr)
+        return {}
+        
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        return {}
+        
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    if not parts:
+        return {}
+        
+    raw = parts[0].get("text", "").strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -483,7 +546,7 @@ def _triage_openai_compat(user_msg: str, base_url: str, model: str, api_key: str
 
 def llm_triage(
     check: dict,
-    provider: str = "anthropic",
+    provider: str = "gemini",
     model: str = "",
     base_url: str = "",
     api_key: str | None = None,
@@ -504,8 +567,10 @@ def llm_triage(
                 return _FALLBACK
             result = _triage_openai_compat(user_msg, resolved_url, resolved_model, resolved_key)
         else:
+            from rebalance.ingest.config import get_gemini_api_key
             resolved_model = model or os.environ.get("HEALTH_LLM_MODEL", "")
-            result = _triage_anthropic(user_msg, resolved_model, api_key)
+            resolved_key = api_key or get_gemini_api_key()
+            result = _triage_gemini(user_msg, resolved_model, resolved_key)
 
         if isinstance(result, dict) and result:
             return result.get("decision", "file"), result.get("reason", "")
@@ -537,15 +602,18 @@ def _resolve_token() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--also-pulse", action="store_true")
+    parser.add_argument(
+        "--also-pulse", action="store_true",
+        help="Deprecated; rebalance doctor already includes collector checks.",
+    )
     parser.add_argument("--warn", action="store_true",
                         help="File issues for WARN findings too (default: FAIL only)")
     parser.add_argument("--close", action="store_true",
                         help="Close issues whose checks have recovered")
     parser.add_argument("--llm-triage", action="store_true",
                         help="Ask an LLM whether each finding is worth filing")
-    parser.add_argument("--llm-provider", default="anthropic",
-                        choices=["anthropic", "openai-compat"])
+    parser.add_argument("--llm-provider", default="gemini",
+                        choices=["gemini", "openai-compat"])
     parser.add_argument("--llm-model", default="", metavar="MODEL")
     parser.add_argument("--llm-base-url", default="", metavar="URL")
     parser.add_argument("--llm-daily-limit", type=int, default=8, metavar="N",
@@ -581,10 +649,11 @@ def main() -> int:
         if disabled:
             run_log.add_cb("CB-1: HEALTH_LLM_DISABLE")
             print("  [CB-1] HEALTH_LLM_DISABLE=1 — LLM triage will be skipped")
-        # Anthropic key check (fail early with a clear message)
-        if args.llm_provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-            print("\n  Warning: ANTHROPIC_API_KEY is not set.")
-            print("  Set it with:  export ANTHROPIC_API_KEY=<your-key>")
+        # Gemini key check (fail early with a clear message)
+        from rebalance.ingest.config import get_gemini_api_key
+        if args.llm_provider == "gemini" and not get_gemini_api_key():
+            print("\n  Warning: GEMINI_API_KEY is not set.")
+            print("  Set it with:  export GEMINI_API_KEY=<your-key>")
             print("  LLM triage will degrade gracefully to 'file' for all checks.\n")
     print(f"  dry-run:          {'yes' if args.dry_run else 'no'}")
     print(f"  log:              {LOG_FILE.relative_to(_REPO_ROOT)}")
@@ -594,8 +663,7 @@ def main() -> int:
     print("Running rebalance doctor...")
     checks = run_doctor_checks()
     if args.also_pulse:
-        print("Running git-pulse health check...")
-        checks.extend(run_pulse_checks())
+        print("  --also-pulse is redundant; collector checks come from rebalance doctor")
     print(f"  {len(checks)} check(s) collected")
     for c in checks:
         run_log.add_check(c)
@@ -620,16 +688,20 @@ def main() -> int:
     llm_calls_this_run = 0
 
     for check in checks:
-        title = f"{ISSUE_TITLE_PREFIX} {check['name']}"
-        already_open = open_issues.get(title)
-        recently_was_closed = recently_closed.get(title)
+        check_id = check["name"]  # stable, registry-level id — see run_doctor_checks()
+        title = f"{ISSUE_TITLE_PREFIX} {check_id}"
+        already_open = open_issues.get(check_id)
+        recently_was_closed = recently_closed.get(check_id)
 
         if check["status"] in min_level:
             if already_open:
-                # Increment the occurrence counter in the issue body.
+                # Refresh the Detail block, then increment the occurrence
+                # counter in the issue body (GH-139: Detail used to go stale
+                # forever after the first sighting).
                 current_body = already_open.get("body") or ""
-                new_count = parse_occurrence_count(current_body) + 1
-                new_body = set_occurrence_count(current_body, new_count, now_str,
+                refreshed_body = set_detail(current_body, check["detail"])
+                new_count = parse_occurrence_count(refreshed_body) + 1
+                new_body = set_occurrence_count(refreshed_body, new_count, now_str,
                                                 device=DEVICE_NAME)
                 update_issue_body(token, args.repo, already_open["number"], new_body, args.dry_run)
                 print(f"  SEEN×{new_count:<3} {check['status'].upper():4}  {check['name']}  "

@@ -1,0 +1,229 @@
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  word-wrap: break-word;
+}
+
+#root {
+  padding: 0 16px 16px;
+}
+
+/* ---------- rendered markdown, theme-matching ---------- */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.2em 0 0.5em;
+}
+
+h1 {
+  font-size: 1.7em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vscode-textSeparator-foreground);
+}
+
+h2 {
+  font-size: 1.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vscode-textSeparator-foreground);
+}
+
+h3 {
+  font-size: 1.2em;
+}
+
+a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+blockquote {
+  margin: 0.8em 0;
+  padding: 0.3em 1em;
+  background: var(--vscode-textBlockQuote-background);
+  border-left: 4px solid var(--vscode-textBlockQuote-border);
+}
+
+code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
+  color: var(--vscode-textPreformat-foreground);
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+pre {
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--vscode-textSeparator-foreground);
+  margin: 1.2em 0;
+}
+
+img {
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+
+th,
+td {
+  border: 1px solid var(--vscode-textSeparator-foreground);
+  padding: 4px 10px;
+}
+
+ul,
+ol {
+  padding-left: 1.6em;
+}
+
+/* ---------- "clio" style: approximates the CLIO macOS app ---------- */
+
+body.style-clio {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #fbf2dc;
+  color: #3d3d3d;
+}
+
+body.style-clio h1,
+body.style-clio h2,
+body.style-clio h3 {
+  color: #3e5c68;
+  border-bottom-color: #e3d9c2;
+}
+
+body.style-clio h2 {
+  letter-spacing: 0.02em;
+}
+
+body.style-clio a {
+  color: #2f6fd6;
+}
+
+body.style-clio a:hover {
+  color: #1f5ac0;
+}
+
+body.style-clio blockquote {
+  background: #e9e9e7;
+  border-left: 5px solid #5b9bd5;
+  border-radius: 6px;
+  padding: 0.6em 1em;
+  color: #444;
+}
+
+body.style-clio code {
+  background: #efe6cf;
+  color: #5a4a2f;
+}
+
+body.style-clio pre {
+  background: #f3ead4;
+}
+
+body.style-clio hr {
+  border-top-color: #e3d9c2;
+}
+
+body.style-clio th,
+body.style-clio td {
+  border-color: #e3d9c2;
+}
+
+body.style-clio pre.source {
+  background: none;
+  color: #3d3d3d;
+}
+
+body.style-clio .placeholder p {
+  color: #7a7060;
+}
+
+body.style-clio .placeholder button {
+  background: #5b9bd5;
+  color: #fff;
+  border-color: transparent;
+}
+
+body.style-clio .placeholder button:hover {
+  background: #4a89c4;
+}
+
+/* ---------- source (raw text) mode ---------- */
+
+pre.source {
+  background: none;
+  padding: 0;
+  margin: 12px 0 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  color: var(--vscode-editor-foreground, var(--vscode-foreground));
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------- empty / error states ---------- */
+
+.placeholder {
+  padding: 24px 4px;
+  text-align: center;
+}
+
+.placeholder p {
+  color: var(--vscode-descriptionForeground);
+}
+
+.placeholder .detail {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.placeholder button {
+  margin-top: 8px;
+  padding: 5px 14px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.placeholder button:hover {
+  background: var(--vscode-button-hoverBackground);
+}

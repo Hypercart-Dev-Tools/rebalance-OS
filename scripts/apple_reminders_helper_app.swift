@@ -258,7 +258,10 @@ final class HelperApp: NSObject, NSApplicationDelegate {
                 fetched = result
                 semaphore.signal()
             }
-            semaphore.wait()
+            // Bound the EventKit callback wait to 4.5s (within the Python invoker's 5s cap).
+            if semaphore.wait(timeout: .now() + 4.5) == .timedOut {
+                res.status = "error"; res.detail = "list-active timed out waiting for EventKit"; return res
+            }
 
             var items: [[String: Any]] = []
             if let fetched = fetched {

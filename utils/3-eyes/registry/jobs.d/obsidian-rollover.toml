@@ -1,0 +1,16 @@
+# 3-Eyes adoption of the incumbent Obsidian daily rollover (GH-195 P8 Wave 2).
+
+id = "obsidian-rollover"
+command = "obsidian-rollover"
+description = "Roll over Obsidian daily notes at 00:40 local."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.obsidian-rollover"]
+
+[schedule.launchd]
+StartCalendarInterval = { Hour = 0, Minute = 40 }
+
+[breakers]
+single_instance = true
+max_rss_gb = 8
+trip_after_failures = 3

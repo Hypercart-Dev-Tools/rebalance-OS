@@ -14,11 +14,19 @@ GET /auth-log/raw  — raw JSONL file download
 
 from __future__ import annotations
 
+import base64
 import html
+import json
 import logging
+import secrets
+import sqlite3
+import threading
+import time
+import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import (
@@ -27,10 +35,11 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from rebalance.ingest.auth_log import read_log, _log_path
+from rebalance.ingest import zapier_calendar, zapier_email
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
-from rebalance.paths import resolve_db
+from rebalance.lib.time_ops import format_relative, parse_utc_iso
+from rebalance.paths import resolve_db, resolve_secret_path
 from rebalance.web_components import badge_html, button_link, render_shell
-
 logger = logging.getLogger(__name__)
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
@@ -44,7 +53,130 @@ FOCUS5_ROSTER_TTL_SECONDS = 24 * 3600
 FOCUS5_NOTE_FILENAME = "focus5.md"
 FOCUS5_NOTE_MAX_CHARS = 64 * 1024
 
-app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
+# A second bottom drawer in Focus 5 Float reads the operator's top open tasks
+# from the vault-root ``0. Goals.md`` file. Keep the list short enough for the
+# panel and only mutate the checkbox marker on completion.
+FOCUS5_GOALS_FILENAME = "0. Goals.md"
+FOCUS5_GOALS_MAX_ITEMS = 8
+
+@asynccontextmanager
+async def _app_lifespan(web_app: FastAPI):
+    _refresh_zapier_secret_state(web_app, log_errors=True)
+    yield
+
+
+app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None, lifespan=_app_lifespan)
+
+ZAPIER_SECRET_NAME = "zapier-webhook-secret"
+_ZAPIER_RATE_LIMIT_CAPACITY = 100.0
+_ZAPIER_RATE_LIMIT_REFILL_PER_SECOND = _ZAPIER_RATE_LIMIT_CAPACITY / 60.0
+_ZAPIER_RATE_LIMIT_BUCKETS: dict[str, tuple[float, float]] = {}
+_ZAPIER_RATE_LIMIT_LOCK = threading.Lock()
+
+
+def _load_zapier_secret(*, log_errors: bool) -> str | None:
+    path = resolve_secret_path(ZAPIER_SECRET_NAME)
+    try:
+        secret = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        if log_errors:
+            logger.error("zapier webhook secret missing: %s", path)
+        return None
+    except OSError as exc:
+        if log_errors:
+            logger.error("zapier webhook secret unreadable: %s (%s)", path, exc)
+        return None
+    if not secret:
+        if log_errors:
+            logger.error("zapier webhook secret empty: %s", path)
+        return None
+    return secret
+
+
+def _refresh_zapier_secret_state(web_app: FastAPI, *, log_errors: bool) -> str | None:
+    secret = _load_zapier_secret(log_errors=log_errors)
+    web_app.state.zapier_webhook_secret = secret
+    return secret
+
+
+def _get_zapier_secret(web_app: FastAPI) -> str | None:
+    if not hasattr(web_app.state, "zapier_webhook_secret"):
+        return _refresh_zapier_secret_state(web_app, log_errors=False)
+    return web_app.state.zapier_webhook_secret
+
+def _verify_zapier_auth(request: Request, secret: str) -> bool:
+    auth = (request.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("basic "):
+        token = auth.split(" ", 1)[1].strip()
+        try:
+            decoded = base64.b64decode(token, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return False
+        username, sep, password = decoded.partition(":")
+        if sep and username and secrets.compare_digest(password, secret):
+            return True
+
+    fallback = request.query_params.get("zapier_secret")
+    return bool(fallback) and secrets.compare_digest(fallback, secret)
+
+
+def _zapier_rate_limit_allows(client_ip: str, *, now: float | None = None) -> bool:
+    current = time.monotonic() if now is None else now
+    key = client_ip or "unknown"
+    with _ZAPIER_RATE_LIMIT_LOCK:
+        tokens, updated_at = _ZAPIER_RATE_LIMIT_BUCKETS.get(
+            key, (_ZAPIER_RATE_LIMIT_CAPACITY, current),
+        )
+        tokens = min(
+            _ZAPIER_RATE_LIMIT_CAPACITY,
+            tokens + max(0.0, current - updated_at) * _ZAPIER_RATE_LIMIT_REFILL_PER_SECOND,
+        )
+        allowed = tokens >= 1.0
+        if allowed:
+            tokens -= 1.0
+        _ZAPIER_RATE_LIMIT_BUCKETS[key] = (tokens, current)
+    return allowed
+
+
+def _zapier_is_dry_run(request: Request) -> bool:
+    return (request.query_params.get("dry_run") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _zapier_handler_for(source: str) -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+    if source == "email":
+        return zapier_email.handle_email_event
+    if source == "calendar":
+        return zapier_calendar.handle_calendar_event
+    return None
+
+
+def _zapier_is_database_locked(exc: Exception) -> bool:
+    return "database is locked" in str(exc).lower()
+
+
+def _zapier_log_request(
+    *,
+    request_id: str,
+    source: str | None,
+    dry_run: bool,
+    status: int,
+    duration_ms: int,
+) -> None:
+    logger.info(
+        "zapier_webhook %s",
+        json.dumps(
+            {
+                "request_id": request_id,
+                "source": source,
+                "dry_run": dry_run,
+                "status": status,
+                "duration_ms": duration_ms,
+            },
+            sort_keys=True,
+        ),
+    )
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> PlainTextResponse:
@@ -88,6 +220,10 @@ _EVENT_BADGE = {
     "job_started":          ("info",    "▶ started"),
     "job_completed":        ("ok",      "✓ completed"),
     "job_failed":           ("danger",  "✗ failed"),
+    # watch-list coverage guard (only emitted on a concerning drop)
+    "watched_repos_reduced": ("warn",   "⚠ watched repos reduced"),
+    # GH-124: commit-threshold auto-promotion
+    "project_auto_promoted": ("ok",     "✓ project auto-added"),
 }
 
 _SOURCE_BADGE = {
@@ -96,6 +232,7 @@ _SOURCE_BADGE = {
     "gmail":    ("neutral", "gmail"),
     "sleuth":   ("neutral", "sleuth"),
     "launchd":  ("neutral", "launchd"),
+    "registry": ("neutral", "registry"),
 }
 
 # Page-local CSS for the FastAPI surfaces (Focus 5 / Auth Log / Home). The base
@@ -104,15 +241,15 @@ _SOURCE_BADGE = {
 # here. All colours are design tokens (var(--…)) so the palette is single-sourced;
 # none of these rules touch the dashboard (which never includes _CSS).
 _CSS = """
-h2 { font-size: 15px; font-weight: 600; color: var(--fg-muted); margin-bottom: 16px; }
-table { width: 100%; border-collapse: collapse; background: var(--panel);
+h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin-bottom: 16px; }
+table { width: 100%; border-collapse: collapse; background: var(--card);
         border-radius: 8px; overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+        box-shadow: var(--shadow); }
 th { background: var(--border); font-size: 12px; font-weight: 600;
-     color: var(--fg-muted); text-align: left; padding: 10px 14px; }
+     color: var(--muted); text-align: left; padding: 10px 14px; }
 td { padding: 10px 14px; font-size: 13px;
      border-top: 1px solid var(--border); vertical-align: top; }
-tr:hover td { background: rgba(0,0,0,.03); }
+tr:hover td { background: var(--zebra); }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
          font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
 .badge-ok      { background: var(--ok);     color: #fff; }
@@ -121,27 +258,27 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .badge-info    { background: var(--info);   color: #fff; }
 .badge-neutral { background: var(--fg-dim); color: #fff; }
 .detail { font-family: "SF Mono", "Fira Code", monospace; font-size: 11px;
-          color: var(--fg-muted); word-break: break-all; }
-.empty { text-align: center; padding: 48px; color: var(--fg-muted); font-size: 14px; }
+          color: var(--muted); word-break: break-all; }
+.empty { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
 .raw-link { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
 .raw-link:hover { text-decoration: underline; }
 
 /* Sleuth reminder groups (home page) */
 .sr-search-bar { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
 .sr-input { flex:1; max-width:340px; padding:6px 10px; border:1px solid var(--border);
-            border-radius:6px; background:var(--panel); color:var(--fg); font-size:13px; }
-.sr-count-label { font-size:12px; color:var(--fg-muted); }
+            border-radius:6px; background:var(--card); color:var(--ink); font-size:13px; }
+.sr-count-label { font-size:12px; color:var(--muted); }
 .sr-groups { display:flex; flex-direction:column; gap:12px; }
-.sr-group  { background:var(--panel); border-radius:8px;
-             box-shadow:0 1px 3px rgba(0,0,0,.12); overflow:hidden; }
+.sr-group  { background:var(--card); border-radius:8px;
+             box-shadow:var(--shadow); overflow:hidden; }
 .sr-group-header { display:flex; align-items:center; gap:8px; padding:10px 14px;
                    border-bottom:1px solid var(--border); font-size:13px; font-weight:600; }
 .sr-group-name  { flex:1; }
-.sr-group-count { font-size:11px; font-weight:400; color:var(--fg-muted); }
+.sr-group-count { font-size:11px; font-weight:400; color:var(--muted); }
 .sr-tasks { list-style:none; padding:0; margin:0; }
 .sr-task  { padding:8px 14px; font-size:13px; border-top:1px solid var(--border); }
 .sr-task:first-child { border-top:none; }
-.sr-task:hover { background:rgba(0,0,0,.03); }
+.sr-task:hover { background:var(--zebra); }
 
 /* Focus 5 — sits inside the .app 280px-sidebar grid, so it has ~280px less width
    than the old centred 1480px <main>. Breakpoints retuned for that frame. */
@@ -150,18 +287,18 @@ tr:hover td { background: rgba(0,0,0,.03); }
 @media (max-width: 1400px) { .f5-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1000px) { .f5-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px)  { .f5-grid { grid-template-columns: 1fr; } }
-.f5-card { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+.f5-card { background: var(--card); border-radius: 8px; box-shadow: var(--shadow);
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .f5-pos { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
-.f5-name { font-size: 15px; font-weight: 600; color: var(--accent); text-decoration: none;
+.f5-name { font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none;
            word-break: break-word; }
 .f5-name:hover { text-decoration: underline; }
-.f5-reason { font-size: 11px; color: var(--fg-muted); }
+.f5-reason { font-size: 11px; color: var(--muted); }
 .f5-sec { border-top: 1px solid var(--border); padding-top: 8px; }
 .f5-sec h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
              color: var(--fg-dim); font-weight: 700; margin-bottom: 5px; }
-.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--fg); }
-.f5-drift { font-size: 11px; color: var(--fg-muted); margin-left: 6px; }
+.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--ink); }
+.f5-drift { font-size: 11px; color: var(--muted); margin-left: 6px; }
 .f5-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
           margin-right: 5px; vertical-align: middle; }
 .f5-pr a { color: var(--accent); text-decoration: none; font-size: 12px; }
@@ -169,8 +306,8 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-muted { font-size: 12px; color: var(--fg-dim); }
 .f5-act { list-style: none; display: flex; flex-direction: column; gap: 5px; }
 .f5-act li { font-size: 12px; line-height: 1.35; }
-.f5-act .when { color: var(--fg-dim); font-size: 10px; }
-.f5-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.f5-act .when { color: var(--timestamp); font-size: 10px; }
+.f5-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .f5-live { color: var(--ok); }
 .f5-stale { color: var(--warn); font-weight: 700; }
 .f5-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
@@ -180,32 +317,38 @@ tr:hover td { background: rgba(0,0,0,.03); }
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
+/* GH-105: a slim, friendly (non-alarm) nudge — deliberately lighter than
+   .f5-warn so it reads as "BTW" rather than a risk warning. */
+.f5-dirty-banner { background: var(--zebra); border: 1px solid var(--border);
+                    color: var(--muted); border-radius: 8px; padding: 6px 14px;
+                    margin-bottom: 12px; font-size: 12px; line-height: 1.4; }
+.f5-dirty-banner b { color: var(--ink); }
 /* GH-81 Phase 2: a fallback-basis badge on a rostered card (reflog disabled). */
-.f5-basis { color: var(--fg-muted); font-weight: 400; font-size: 12px; }
+.f5-basis { color: var(--muted); font-weight: 400; font-size: 12px; }
 /* Focus 5 / Dirty Five view toggle — a small segmented control. */
 .f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
-            background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-.f5-view { font-size: 13px; font-weight: 600; color: var(--fg-muted); text-decoration: none;
+            background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+.f5-view { font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none;
            padding: 4px 12px; border-radius: 6px; }
-.f5-view:hover { color: var(--fg); }
-.f5-view.active { background: rgba(31,111,235,.12); color: var(--accent); }
+.f5-view:hover { color: var(--ink); }
+.f5-view.active { background: var(--zebra); color: var(--accent); }
 
 /* What's Next — the single ranked "work on next" list. Reuses the shared
    .badge/.empty rules; only the list/row chrome is page-local. */
 .wn-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
               margin-left: 10px; }
 .wn-refresh:hover { text-decoration: underline; }
-.wn-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.wn-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .wn-blended { color: var(--ok); }
 .wn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.wn-item { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+.wn-item { background: var(--card); border-radius: 8px; box-shadow: var(--shadow);
            padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
 .wn-rank { font-size: 13px; font-weight: 700; color: var(--fg-dim); min-width: 28px;
            font-variant-numeric: tabular-nums; }
 .wn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wn-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wn-title { font-size: 14px; font-weight: 600; color: var(--fg); word-break: break-word; }
-.wn-why { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+.wn-title { font-size: 14px; font-weight: 600; color: var(--ink); word-break: break-word; }
+.wn-why { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .wn-ev { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .wn-ev li { font-size: 11px; color: var(--fg-dim); word-break: break-word; }
 .wn-src { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em; }
@@ -233,14 +376,14 @@ def _auth_detail_html(detail: dict[str, Any]) -> str:
     return "<br>".join(lines)
 
 
-def _page(title: str, body: str, *, active: str, wide: bool = False) -> HTMLResponse:
+def _page(title: str, body: str, *, active: str, wide: bool = False, extra_css: str = "") -> HTMLResponse:
     """Wrap a page body in the shared sidebar shell (tokens + chrome + buttons).
 
     The nav/sidebar comes from render_shell (minimal, I/O-free sidebar); ``active``
     marks the current nav item (``'today' | 'focus5' | 'authlog'``).
     """
     return HTMLResponse(
-        render_shell(title, body, active=active, wide=wide, page_css=_CSS)
+        render_shell(title, body, active=active, wide=wide, page_css=_CSS + "\n" + extra_css)
     )
 
 
@@ -285,7 +428,7 @@ def _render_sleuth_groups() -> str:
     groups_html = "\n".join(rows)
     return (
         f"<h2 style='margin-top:28px;'>Reminders"
-        f"<span style='font-size:12px;font-weight:400;color:var(--fg-muted);margin-left:10px;'>"
+        f"<span style='font-size:12px;font-weight:400;color:var(--muted);margin-left:10px;'>"
         f"{total_tasks} active across {len(groups)} group{'s' if len(groups) != 1 else ''}"
         f"</span></h2>"
         f"<div class='sr-search-bar'>"
@@ -329,17 +472,7 @@ def index() -> RedirectResponse:
 
 def _rel_time(iso: str | None) -> str:
     """Render an ISO-8601 timestamp as a compact relative age (e.g. '3h ago')."""
-    if not iso:
-        return ""
-    try:
-        ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    except ValueError:
-        return ""
-    secs = max(0, int((datetime.now(timezone.utc) - ts).total_seconds()))
-    for label, unit in (("d", 86400), ("h", 3600), ("m", 60)):
-        if secs >= unit:
-            return f"{secs // unit}{label} ago"
-    return "just now"
+    return format_relative(iso)
 
 
 def _f5_health(card: dict[str, Any]) -> str:
@@ -390,14 +523,11 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
     now_ts = int(datetime.now(timezone.utc).timestamp())
     shown, items = warns[:8], []
     for w in shown:
-        bits = []
-        if w.get("modified_count"):
-            bits.append(f"{w['modified_count']} modified")
-        if w.get("untracked_count"):
-            bits.append(f"{w['untracked_count']} untracked")
-        if w.get("ahead"):
-            bits.append(f"{w['ahead']} unpushed")
-        item = f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'})"
+        reason = w.get("warning_reason")
+        if not reason:
+            from rebalance.ingest.focus5_scan import off_roster_reason
+            reason = off_roster_reason(w)
+        item = f"<b>{html.escape(w['repo_name'])}</b> ({html.escape(reason)})"
         if explain_on:
             why = html.escape(
                 explain_recency(w.get("recency_basis"), w.get("my_local_commit_ts"),
@@ -411,6 +541,35 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
         f"<div class='f5-warn'>⚠ <b>{len(warns)}</b> repo(s) outside the top 5 need "
         f"attention <span class='f5-muted'>(as of roster computed {age})</span>: "
         f"{' · '.join(items)}{more}</div>"
+    )
+
+
+def _f5_dirty_banner(data: dict[str, Any]) -> str:
+    """Slim single-row "BTW, this went dirty" nudge above card #1 (GH-105).
+
+    Deliberately shows at most one repo (the single most-recently-touched
+    dirty one, per ``pick_newest_dirty_off_roster``) so it stays a passive
+    nudge rather than duplicating ``_f5_warning_strip``'s full off-roster
+    list. ``dirty_banner`` is already ``None`` on the Dirty Five transient
+    rerank (every dirty repo is a full card there — see ``summarize_focus5``),
+    so no view check is needed here.
+    """
+    banner = data.get("dirty_banner")
+    if not banner:
+        return ""
+    name = html.escape(banner["repo_name"])
+    when = _rel_time(
+        datetime.fromtimestamp(banner["my_local_commit_ts"], tz=timezone.utc).isoformat()
+    )
+    bits = []
+    if banner.get("modified_count"):
+        bits.append(f"{banner['modified_count']} modified")
+    if banner.get("untracked_count"):
+        bits.append(f"{banner['untracked_count']} untracked")
+    detail = ", ".join(bits) or "uncommitted changes"
+    return (
+        f"<div class='f5-dirty-banner'>👋 BTW, recent work on <b>{name}</b> left it "
+        f"dirty ({detail}) — last commit {when}</div>"
     )
 
 
@@ -527,8 +686,9 @@ def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
         f"<span class='f5-live'>● tree health checked live</span></div>"
     )
     strip = _f5_warning_strip(data)
+    banner = _f5_dirty_banner(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}{_FOCUS5_OPEN_ASSETS}"
+    return f"{head}{meta}{strip}{banner}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}{_FOCUS5_OPEN_ASSETS}"
 
 
 # Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
@@ -603,9 +763,8 @@ def _roster_stale(computed_at: str | None) -> bool:
     """True if the roster snapshot is missing or older than the TTL."""
     if not computed_at:
         return True
-    try:
-        ts = datetime.fromisoformat(computed_at.replace("Z", "+00:00"))
-    except ValueError:
+    ts = parse_utc_iso(computed_at)
+    if ts is None:
         return True
     return (datetime.now(timezone.utc) - ts).total_seconds() > FOCUS5_ROSTER_TTL_SECONDS
 
@@ -657,6 +816,125 @@ def focus5_page(refresh: bool = False, view: str = "focus5"):
     return _page(page_title, _focus5_body(data, view=view), active="focus5", wide=True)
 
 
+# --------------------------------------------------------------------------- #
+# 3-Eyes fleet job-health tile (GH-195) — a synthetic Focus 5 roster card.
+#
+# 3-Eyes (utils/3-eyes) is the optional local job supervisor. When it is ACTIVE on
+# this machine, /focus-5.json appends ONE extra roster card summarizing whether the
+# catalogued scheduled jobs are healthy — so the "a job is failing" signal rides
+# along on the panel the operator already watches. The card renders through the
+# app's existing dynamic ForEach (no native-app change; CONTRACT.md documents the
+# additive 6th tile). It is:
+#   * additive + fully defensive — ANY failure (3-Eyes absent, import error,
+#     launchctl error) yields no card and the roster is served unchanged;
+#   * gated on 3-Eyes being active — a downstream/inert clone never shows it; and
+#   * cached (short TTL) so this read-only, frequently-polled route never spawns
+#     `launchctl list` on every request.
+# --------------------------------------------------------------------------- #
+
+_THREE_EYES_DIR = Path(__file__).resolve().parents[2] / "utils" / "3-eyes"
+_TE_HEALTH_TTL_S = 20.0
+_te_health_lock = threading.Lock()
+_te_health_cache: dict[str, Any] = {"at": -1e9, "card": None}
+
+
+def _three_eyes_health_scan() -> dict | None:
+    """Return ``three_eyes.health.scan()`` when 3-Eyes is ACTIVE here, else None.
+
+    Isolated so the import + activation gate + subprocess all live behind the one
+    try/except in the caller: a problem here must never break /focus-5.json.
+    """
+    import sys
+
+    d = str(_THREE_EYES_DIR)
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    from three_eyes import config as te_config, health as te_health
+
+    if not te_config.three_eyes_active():
+        return None
+    return te_health.scan()
+
+
+def _build_three_eyes_card(report: dict) -> dict:
+    """Shape a 3-Eyes health report into a RepoCard-compatible dict (snake_case).
+
+    Mapping: the verdict rides in ``repo_name`` (the card title) and ``rank_reason``
+    (which the app shows as the always-visible subtitle when the commit timestamps
+    are null); ``is_dirty`` drives the red StatusDot when anything is failing.
+    """
+    ok = int(report.get("ok", 0))
+    failing = int(report.get("failing", 0))
+    not_loaded = int(report.get("not_loaded", 0))
+    unknown = int(report.get("unknown", 0))
+    probe_ok = bool(report.get("launchctl_available", True))
+    fail_rows = [r for r in report.get("rows", []) if "FAIL" in r.get("health", "")]
+    verdict = f"{ok} ok · {failing} failing · {not_loaded} not-loaded"
+    if not probe_ok:
+        # The probe could not run. Never render this as a clean bill of health —
+        # an unreadable fleet must look like it needs attention, not like it is green.
+        title = "3-Eyes — job health UNKNOWN"
+        why = report.get("probe_error") or "launchctl could not be consulted"
+        reason = f"3-Eyes could not read launchd job state ({why}). Health is unknown, not confirmed healthy."
+    elif failing:
+        title = f"3-Eyes — {failing} job{'s' if failing != 1 else ''} FAILING"
+        detail = "; ".join(f"{r['label']} {r['health']}" for r in fail_rows[:6])
+        reason = f"3-Eyes fleet job health — {verdict}. Failing: {detail}."
+    else:
+        title = "3-Eyes — all jobs OK"
+        reason = f"3-Eyes fleet job health — {verdict}. All catalogued jobs healthy."
+    now_iso = datetime.now(timezone.utc).isoformat()
+    path = str(_THREE_EYES_DIR)
+    return {
+        "position": 0,                      # re-stamped by the caller
+        "repo_name": title,
+        "repo_full_name": None,
+        "local_path": path,                 # unique → stable Identifiable card id
+        "remote_url": None,
+        "vscode_url": f"vscode://file{path}",
+        "rank_reason": reason,              # commitLine falls back to this → subtitle
+        "ranking_mode": "three_eyes_health",
+        "computed_at": now_iso,
+        "branch": None,
+        "upstream": None,
+        "has_upstream": None,
+        "ahead": 0,
+        "behind": 0,
+        "modified_count": failing,          # failing count in the "M" slot
+        "untracked_count": not_loaded if probe_ok else unknown,
+        "is_dirty": (failing > 0) or not probe_ok,   # red StatusDot: failing OR unreadable
+        "health_available": probe_ok,
+        "health_probed_at": now_iso,
+        "last_commit_at": None,             # null → commitLine shows rank_reason
+        "last_commit_ts": None,
+        "my_last_commit_ts": None,
+        "probed_at": now_iso,
+        "newest_pr": None,
+        "recent_activity": [],
+    }
+
+
+def _three_eyes_health_card(position: int) -> dict | None:
+    """Build the synthetic 3-Eyes health roster card, or None. Cached + defensive."""
+    now = time.monotonic()
+    with _te_health_lock:
+        if (now - _te_health_cache["at"]) >= _TE_HEALTH_TTL_S:
+            card = None
+            try:
+                report = _three_eyes_health_scan()
+                if report is not None:
+                    card = _build_three_eyes_card(report)
+            except Exception:               # never break the roster endpoint
+                logger.debug("3-Eyes health tile skipped", exc_info=True)
+                card = None
+            _te_health_cache["at"] = now
+            _te_health_cache["card"] = card
+        card = _te_health_cache["card"]
+    if card is None:
+        return None
+    return {**card, "position": position}
+
+
 @app.get("/focus-5.json")
 def focus5_json(view: str = "focus5") -> JSONResponse:
     """Read-only JSON projection of the Focus 5 roster for native/desktop clients.
@@ -682,7 +960,7 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
         # Brand-new machine: return the empty contract shape (not a 404) so the
         # polling client always decodes the same structure.
         return JSONResponse({
-            "roster": [], "off_roster_warnings": [],
+            "roster": [], "off_roster_warnings": [], "dirty_banner": None,
             "computed_at": None, "ranking_mode": None,
             "summary": {"discovered": 0, "roster_size": 0,
                         "off_roster_attention": 0, "rank_cutoff_ts": None},
@@ -690,6 +968,11 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
 
     data = summarize_focus5(db, mode="dirty_first" if view == "dirty" else None)
     logger.info("focus5.json: view=%s roster=%d", view, data["summary"]["roster_size"])
+    # GH-195: append the 3-Eyes fleet-health tile when 3-Eyes is active here. Additive
+    # and defensive — None when 3-Eyes is inert/absent, leaving the roster untouched.
+    tile = _three_eyes_health_card(len(data["roster"]) + 1)
+    if tile is not None:
+        data["roster"].append(tile)
     return JSONResponse(data)
 
 
@@ -727,6 +1010,123 @@ def focus5_note() -> JSONResponse:
 
     logger.info("focus5.note: served %d chars from %s", len(content), note)
     return JSONResponse({"exists": True, "content": content, "path": str(note)})
+
+
+def _focus5_goals_payload() -> dict[str, Any]:
+    from rebalance.ingest.config import get_vault_path
+    from rebalance.ingest.goals_file import parse_goals
+
+    vault = get_vault_path()
+    if not vault:
+        return {
+            "exists": False,
+            "items": [],
+            "path": None,
+            "total_open": 0,
+            "reason": "vault_not_configured",
+            "message": "vault_path is not configured",
+        }
+
+    goals = Path(vault).expanduser() / FOCUS5_GOALS_FILENAME
+    try:
+        if not goals.is_file():
+            return {
+                "exists": False,
+                "items": [],
+                "path": str(goals),
+                "total_open": 0,
+                "reason": "file_missing",
+                "message": f"{FOCUS5_GOALS_FILENAME} not found in the configured vault",
+            }
+        all_items = parse_goals(goals, limit=None)
+    except OSError as exc:
+        logger.warning("focus5.goals: could not read %s: %s", goals, exc)
+        return {
+            "exists": False,
+            "items": [],
+            "path": str(goals),
+            "total_open": 0,
+            "reason": "read_failed",
+            "message": str(exc),
+        }
+
+    items = [
+        {
+            "title": str(item.get("title") or ""),
+            "description": str(item.get("description") or ""),
+            "line_index": item.get("line_index"),
+        }
+        for item in all_items[:FOCUS5_GOALS_MAX_ITEMS]
+    ]
+    logger.info(
+        "focus5.goals: served %d of %d open tasks from %s",
+        len(items), len(all_items), goals,
+    )
+    return {
+        "exists": True,
+        "items": items,
+        "path": str(goals),
+        "total_open": len(all_items),
+        "reason": None,
+        "message": None,
+    }
+
+
+@app.get("/focus-5/goals")
+def focus5_goals() -> JSONResponse:
+    """Read-only projection of the operator's top open tasks from ``0. Goals.md``.
+
+    Always returns ``{exists, items, path, total_open}`` at HTTP 200 so the
+    native client decodes one shape. ``items`` are the first 8 unchecked tasks
+    in file order, each with ``title``, ``description``, and ``line_index``.
+    """
+    return JSONResponse(_focus5_goals_payload())
+
+
+class Focus5GoalCompleteRequest(BaseModel):
+    title: str
+    line_index: int | None = None
+
+
+@app.post("/api/focus5/goals/complete")
+def focus5_complete_goal(req: Focus5GoalCompleteRequest, request: Request) -> JSONResponse:
+    """Flip one ``0. Goals.md`` checkbox from open to complete, then re-read."""
+    from rebalance.ingest.goals_file import complete_goal_in_file
+
+    if not _request_is_local(request):
+        logger.warning("focus5 goals: rejected non-local request from %s", request.client)
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+
+    title = (req.title or "").strip()
+    if not title:
+        return JSONResponse({"ok": False, "error": "title is required"}, status_code=400)
+
+    payload = _focus5_goals_payload()
+    path = payload.get("path")
+    if not path:
+        return JSONResponse(
+            {"ok": False, "error": "goals file missing"},
+            status_code=404,
+        )
+
+    completion = complete_goal_in_file(
+        Path(path),
+        title,
+        line_index=req.line_index,
+    )
+    if not completion:
+        return JSONResponse(
+            {"ok": False, "error": "goal not found", "title": title},
+            status_code=404,
+        )
+
+    refreshed = _focus5_goals_payload()
+    return JSONResponse({
+        "ok": True,
+        "title": title,
+        "line_index": completion["line_index"],
+        **refreshed,
+    })
 
 
 class Focus5HideRequest(BaseModel):
@@ -922,6 +1322,136 @@ def focus5_open(req: Focus5HideRequest, request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Zapier ingest — Phase 1 webhook receiver.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/zapier/health")
+def zapier_health(request: Request) -> JSONResponse:
+    return JSONResponse({
+        "ok": True,
+        "secret_configured": bool(_get_zapier_secret(request.app)),
+    })
+
+
+@app.post("/api/zapier/ingest")
+async def zapier_ingest(request: Request) -> JSONResponse:
+    request_id = uuid.uuid4().hex
+    source: str | None = None
+    dry_run = _zapier_is_dry_run(request)
+    started_at = time.monotonic()
+    status_code = 500
+
+    try:
+        secret = _get_zapier_secret(request.app)
+        if not secret:
+            status_code = 503
+            return JSONResponse(
+                {"ok": False, "error": "secret_not_configured", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        if not _verify_zapier_auth(request, secret):
+            status_code = 403
+            return JSONResponse(
+                {"ok": False, "error": "forbidden", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        client_ip = (request.client.host if request.client else "") or "unknown"
+        if not _zapier_rate_limit_allows(client_ip):
+            status_code = 429
+            return JSONResponse(
+                {"ok": False, "error": "rate_limited", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            status_code = 400
+            return JSONResponse(
+                {"ok": False, "error": "invalid_json", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        if not isinstance(payload, dict):
+            status_code = 400
+            return JSONResponse(
+                {"ok": False, "error": "invalid_payload", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        source = str(payload.get("source") or "").strip().lower()
+        handler = _zapier_handler_for(source)
+        if handler is None:
+            status_code = 400
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "unknown_source",
+                    "request_id": request_id,
+                    "source": source or None,
+                },
+                status_code=status_code,
+            )
+
+        if dry_run:
+            status_code = 200
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "request_id": request_id,
+                    "source": source,
+                    "dry_run": True,
+                },
+                status_code=status_code,
+            )
+
+        result = handler(payload)
+        body: dict[str, Any] = {"ok": True, "request_id": request_id, "source": source}
+        if isinstance(result, dict):
+            body.update(result)
+        else:
+            body["result"] = result
+        status_code = 200
+        return JSONResponse(body, status_code=status_code)
+    except NotImplementedError as exc:
+        status_code = 501
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "not_implemented",
+                "request_id": request_id,
+                "source": source,
+                "detail": str(exc),
+            },
+            status_code=status_code,
+        )
+    except sqlite3.OperationalError as exc:
+        if _zapier_is_database_locked(exc):
+            status_code = 503
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "database_locked",
+                    "request_id": request_id,
+                    "source": source,
+                },
+                status_code=status_code,
+            )
+        raise
+    finally:
+        _zapier_log_request(
+            request_id=request_id,
+            source=source,
+            dry_run=dry_run,
+            status=status_code,
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+        )
+
+
+# ---------------------------------------------------------------------------
 # What's Next — the single ranked "what should we work on next" view.
 #
 # Pure renderer over a RankedNextActions.as_dict() shape; the handler is
@@ -1066,12 +1596,12 @@ _SYSLOG_TOGGLE_CSS = (
     "<style>"
     ".syslog-bar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.75rem 0}"
     ".syslog-toggles{display:flex;gap:.3rem;flex-wrap:wrap}"
-    ".syslog-toggle{padding:.3rem .75rem;border:1px solid #d0d7de;border-radius:2rem;"
-    "background:#f6f8fa;cursor:pointer;font:inherit;font-size:.85rem;color:#24292f}"
-    ".syslog-toggle.active{background:#0969da;border-color:#0969da;color:#fff;font-weight:600}"
+    ".syslog-toggle{padding:.3rem .75rem;border:1px solid var(--border);border-radius:2rem;"
+    "background:var(--card);cursor:pointer;font:inherit;font-size:.85rem;color:var(--ink)}"
+    ".syslog-toggle.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}"
     ".syslog-input{flex:1;min-width:14rem;padding:.4rem .6rem;font:inherit;"
-    "border:1px solid #d0d7de;border-radius:6px}"
-    ".syslog-count{color:#57606a;font-size:.85rem;white-space:nowrap}"
+    "border:1px solid var(--border);border-radius:6px}"
+    ".syslog-count{color:var(--muted);font-size:.85rem;white-space:nowrap}"
     "</style>"
 )
 
@@ -1306,7 +1836,7 @@ def sleuth_graph_page() -> HTMLResponse:
     _legend_entries = [("client", "Client"), ("github", "GitHub issue/PR"),
                         ("channel", "Channel"), ("other", "Other")]
     legend_items = "".join(
-        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;'>"
+        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--ink);'>"
         f"<span style='width:10px;height:10px;border-radius:50%;background:{_KIND_COLOR[k]['bg']};display:inline-block;'></span>"
         f"{lbl}</span>"
         for k, lbl in _legend_entries
@@ -1321,17 +1851,17 @@ def sleuth_graph_page() -> HTMLResponse:
     body = f"""
 {error_html}
 <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-  <span style="font-size:13px;color:var(--fg-muted);">
+  <span style="font-size:13px;color:var(--muted);">
     {total} active reminders · {len(groups)} groups
   </span>
   <span style="margin-left:auto;">{legend_items}</span>
 </div>
 <div id="cy" style="width:100%;height:calc(100vh - 160px);min-height:500px;
-     background:var(--panel);border-radius:8px;
-     box-shadow:0 1px 3px rgba(0,0,0,.12);"></div>
-<div id="cy-tooltip" style="display:none;position:fixed;background:var(--panel);
+     background:var(--card);border-radius:8px;
+     box-shadow:var(--shadow);"></div>
+<div id="cy-tooltip" style="display:none;position:fixed;background:var(--card);
      border:1px solid var(--border);border-radius:6px;padding:8px 12px;
-     font-size:12px;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.15);
+     font-size:12px;max-width:320px;box-shadow:var(--shadow);
      pointer-events:none;z-index:100;line-height:1.5;"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.1/cytoscape.min.js"
@@ -1341,12 +1871,10 @@ def sleuth_graph_page() -> HTMLResponse:
 (function() {{
   var elements = {elements_json};
 
-  var kindColor = {{
-    client:  {{ bg: '#2f7437', border: '#1e4d25' }},
-    github:  {{ bg: '#1d6fa8', border: '#134d75' }},
-    channel: {{ bg: '#6f3fa8', border: '#4d2a75' }},
-    other:   {{ bg: '#8a857c', border: '#5b5750' }},
-  }};
+  var rootStyle = getComputedStyle(document.documentElement);
+  var getVar = function(prop) {{ return rootStyle.getPropertyValue(prop).trim(); }};
+
+
 
   var cy = cytoscape({{
     container: document.getElementById('cy'),
@@ -1357,18 +1885,18 @@ def sleuth_graph_page() -> HTMLResponse:
         selector: 'node[kind]',
         style: {{
           'background-color': 'data(bg)',
-          'border-color': 'data(border)',
+          'border-color': getVar('--border'),
           'border-width': 2,
           'label': 'data(label)',
           'font-size': 13,
           'font-weight': 600,
-          'color': '#fff',
+          'color': getVar('--ink'),
           'text-valign': 'top',
           'text-halign': 'center',
           'text-margin-y': -6,
           'padding': 18,
           'shape': 'round-rectangle',
-          'text-background-color': 'data(bg)',
+          'text-background-color': getVar('--card'),
           'text-background-opacity': 0.85,
           'text-background-padding': '3px',
           'text-background-shape': 'round-rectangle',
@@ -1378,12 +1906,12 @@ def sleuth_graph_page() -> HTMLResponse:
       {{
         selector: 'node[reminder_id]',
         style: {{
-          'background-color': '#ffffff',
-          'border-color': '#c8c0b4',
+          'background-color': getVar('--card'),
+          'border-color': getVar('--border'),
           'border-width': 1.5,
           'label': 'data(label)',
           'font-size': 10,
-          'color': '#1d2024',
+          'color': getVar('--ink'),
           'text-valign': 'bottom',
           'text-halign': 'center',
           'text-margin-y': 4,
@@ -1398,7 +1926,7 @@ def sleuth_graph_page() -> HTMLResponse:
       {{
         selector: 'edge[kind="github"]',
         style: {{
-          'line-color': '#1d6fa8',
+          'line-color': getVar('--info'),
           'width': 2,
           'line-style': 'dashed',
           'target-arrow-shape': 'none',
@@ -1411,7 +1939,7 @@ def sleuth_graph_page() -> HTMLResponse:
         selector: 'node:selected, node.highlighted',
         style: {{
           'border-width': 3,
-          'border-color': '#1f6feb',
+          'border-color': getVar('--accent'),
           'z-index': 10,
         }},
       }},
@@ -1441,7 +1969,7 @@ def sleuth_graph_page() -> HTMLResponse:
     var d = e.target.data();
     tooltip.innerHTML =
       '<b style="display:block;margin-bottom:4px;">' + escHtml(d.full_text || d.label) + '</b>' +
-      (d.channel ? '<span style="color:#5b5750;">#' + escHtml(d.channel) + '</span>' : '') +
+      (d.channel ? '<span style="color:var(--muted);">#' + escHtml(d.channel) + '</span>' : '') +
       (d.state ? ' &nbsp;·&nbsp; <code>' + escHtml(d.state) + '</code>' : '');
     tooltip.style.display = 'block';
   }});
@@ -1469,3 +1997,250 @@ def sleuth_graph_page() -> HTMLResponse:
 </script>"""
 
     return _page("Reminder Graph", body, active="sleuthgraph", wide=True)
+
+def settings_page() -> HTMLResponse:
+    from rebalance.web_components import data_row
+
+    sample_rows = "".join(
+        data_row(
+            marker_html='<span style="width:15px;height:15px;border:1.5px solid var(--muted);border-radius:4px;display:inline-block;opacity:0.6;"></span>',
+            title_html=title,
+            timestamp=ts,
+            stripe_index=i
+        )
+        for i, (title, ts) in enumerate([
+            ("Invoice Taiwo", "2026-07-18T09:00:00Z"),
+            ("Rebalance PRs", "2026-07-18T13:45:00Z"),
+            ("Team Call", "2026-07-19T13:45:00Z"),
+            ("Submit Sleuth to Product Hunt", "2026-07-20T09:00:00Z"),
+        ])
+    )
+
+    page_css = """
+.settings-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 18px; transition: background 0.25s, border-color 0.25s; }
+.settings-section h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+.settings-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.preset-card { border: 2px solid var(--border); border-radius: 10px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; background: var(--card); transition: border-color 0.15s; }
+.preset-card:hover { border-color: var(--muted); }
+.preset-card.active { border-color: var(--accent); }
+.preset-preview { border-radius: 6px; overflow: hidden; height: 84px; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+.preset-label { display: flex; align-items: center; gap: 7px; padding: 0 4px 4px; font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.preset-dot { width: 14px; height: 14px; border-radius: 99px; flex-shrink: 0; border: 2px solid var(--muted); background: transparent; transition: border-color 0.15s, background 0.15s; }
+.preset-card.active .preset-dot { border-color: var(--accent); background: var(--accent); }
+.fine-tune-header { font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: var(--muted); text-transform: uppercase; border-top: 1px solid var(--border); padding-top: 16px; }
+.fine-tune-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.color-field { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.color-field input[type="color"] { width: 28px; height: 28px; border: none; padding: 0; background: none; cursor: pointer; }
+.color-field-label { display: flex; flex-direction: column; gap: 1px; }
+.color-field-name { font-weight: 600; font-size: 12px; color: var(--ink); }
+.color-field-val { font-family: "SF Mono", Menlo, monospace; font-size: 10.5px; color: var(--muted); }
+.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer; border: none; display: inline-flex; align-items: center; justify-content: center; }
+.btn-secondary { background: var(--card); border: 1px solid var(--border); color: var(--ink); font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.cal-preview { position: relative; border: 1px solid var(--border); border-radius: 8px; height: 56px; margin: 2px 0 6px; }
+.cal-preview-time1 { position: absolute; left: 10px; top: 8px; font-size: 10.5px; color: var(--timestamp); }
+.cal-preview-line1 { position: absolute; left: 48px; right: 10px; top: 12px; border-top: 1px solid var(--border); }
+.cal-preview-time2 { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: var(--timestamp); }
+.cal-preview-line2 { position: absolute; left: 48px; right: 10px; bottom: 12px; border-top: 1px solid var(--border); }
+.cal-preview-now { position: absolute; left: 48px; right: 10px; top: 27px; display: flex; align-items: center; }
+.cal-preview-now-dot { width: 11px; height: 11px; border-radius: 99px; background: var(--nowline); margin-left: -5px; flex-shrink: 0; }
+.cal-preview-now-line { flex: 1; height: 2px; background: var(--nowline); }
+"""
+    body = f"""
+<h2>Pulse / Settings</h2>
+<div style="display: flex; flex-direction: column; gap: 20px; max-width: 760px; padding-bottom: 64px;">
+  <section class="settings-section">
+    <div>
+      <h2>Color theme</h2>
+      <div style="color: var(--muted); font-size: 13px; margin-top: 3px;">Applies to all Pulse dashboard pages and modules.</div>
+    </div>
+    
+    <div class="settings-presets" id="presetsGrid"></div>
+    
+    <div class="fine-tune-header">Fine-tune colors</div>
+    <div class="fine-tune-grid" id="fineTuneGrid"></div>
+    
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+      <button id="btnSave" class="btn-primary">Save</button>
+      <button id="btnReset" class="btn-secondary">Reset</button>
+      <span style="font-size: 11.5px; color: var(--muted);">Reset returns to the selected theme's defaults.</span>
+    </div>
+  </section>
+  
+  <section class="settings-section">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <h2>Preview</h2>
+      <span style="font-family: 'SF Mono', Menlo, monospace; font-size: 11px; color: var(--muted);" id="lblThemeName">theme: default</span>
+    </div>
+    
+    <ul class="rb-data-list" style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: -4px;">
+      {sample_rows}
+    </ul>
+    
+    <div class="cal-preview">
+      <span class="cal-preview-time1">1 PM</span>
+      <span class="cal-preview-line1"></span>
+      <span class="cal-preview-time2">2 PM</span>
+      <span class="cal-preview-line2"></span>
+      <span class="cal-preview-now">
+        <span class="cal-preview-now-dot"></span>
+        <span class="cal-preview-now-line"></span>
+      </span>
+    </div>
+  </section>
+</div>
+<script>
+(function() {{
+  const PRESETS = {{
+    default:  {{ name: 'Current default', page: '#f3efe7', card: '#ffffff', ink: '#1d2024', accent: '#1f6feb', border: '#e3ddd0', nowline: '#d43d2a', timestamp: '#8a857c' }},
+    dark:     {{ name: 'Dark mode',       page: '#191713', card: '#242019', ink: '#f0ece1', accent: '#6f97ea', border: '#3a3529', nowline: '#e05a48', timestamp: '#8f887a' }},
+    grey:     {{ name: 'Grey mode',       page: '#ececec', card: '#ffffff', ink: '#1e1e1e', accent: '#444444', border: '#dcdcdc', nowline: '#d43d2a', timestamp: '#8a8a8a' }},
+    lightblue:{{ name: 'Light blue',      page: '#e9f0f7', card: '#ffffff', ink: '#16283c', accent: '#1d6fd1', border: '#d3e0ee', nowline: '#d43d2a', timestamp: '#7d90a5' }},
+  }};
+  
+  const FIELD_LABELS = {{ page: 'Page background', card: 'Card background', ink: 'Text', accent: 'Accent', border: 'Borders', nowline: 'Calendar time line', timestamp: 'Date + time text' }};
+  const FIELDS = window.__pulseTheme.FIELDS;
+  
+  let currentTheme = 'default';
+  let currentColors = null; // null means using preset unmodified
+  let lastPreset = 'default';
+  
+  function extractFields(obj) {{
+    const res = {{}};
+    FIELDS.forEach(f => res[f] = obj[f]);
+    return res;
+  }}
+  
+  function getWorkingColors() {{
+    return currentColors || extractFields(PRESETS[currentTheme === 'custom' ? 'default' : currentTheme]);
+  }}
+  
+  function setColors(newColors) {{
+    window.__pulseTheme.apply(newColors);
+  }}
+  
+  function renderUI() {{
+    const working = getWorkingColors();
+    const presetsGrid = document.getElementById('presetsGrid');
+    presetsGrid.innerHTML = '';
+    
+    ['default', 'dark', 'grey', 'lightblue'].forEach(k => {{
+      const p = PRESETS[k];
+      const mix = window.__pulseTheme.mix;
+      const pMuted = mix(p.ink, p.page, 0.45);
+      
+      const el = document.createElement('div');
+      el.className = 'preset-card' + (currentTheme === k ? ' active' : '');
+      el.onclick = () => {{ currentTheme = k; lastPreset = k; currentColors = null; setColors(getWorkingColors()); renderUI(); }};
+      
+      el.innerHTML = `
+        <div class="preset-preview" style="background: ${{p.page}}; border: 1px solid ${{p.border}};">
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <span style="width: 8px; height: 8px; border-radius: 3px; background: ${{p.accent}};"></span>
+            <span style="width: 34px; height: 4px; border-radius: 99px; background: ${{p.ink}}; opacity: 0.75;"></span>
+          </div>
+          <div style="flex: 1; border-radius: 4px; background: ${{p.card}}; border: 1px solid ${{p.border}}; padding: 5px 6px; display: flex; flex-direction: column; gap: 4px;">
+            <span style="width: 60%; height: 4px; border-radius: 99px; background: ${{p.ink}}; opacity: 0.7;"></span>
+            <span style="width: 85%; height: 4px; border-radius: 99px; background: ${{pMuted}};"></span>
+            <span style="width: 75%; height: 4px; border-radius: 99px; background: ${{pMuted}};"></span>
+          </div>
+        </div>
+        <div class="preset-label">
+          <span class="preset-dot"></span>
+          <span>${{p.name}}</span>
+        </div>
+      `;
+      presetsGrid.appendChild(el);
+    }});
+    
+    const fineTuneGrid = document.getElementById('fineTuneGrid');
+    fineTuneGrid.innerHTML = '';
+    
+    FIELDS.forEach(f => {{
+      const el = document.createElement('label');
+      el.className = 'color-field';
+      
+      const inp = document.createElement('input');
+      inp.type = 'color';
+      inp.value = working[f];
+      inp.oninput = (e) => {{
+        if (!currentColors) currentColors = {{ ...working }};
+        if (currentTheme !== 'custom') {{
+           lastPreset = currentTheme;
+           currentTheme = 'custom';
+        }}
+        currentColors[f] = e.target.value;
+        setColors(currentColors);
+        renderUI();
+      }};
+      
+      const textWrap = document.createElement('span');
+      textWrap.className = 'color-field-label';
+      textWrap.innerHTML = `<span class="color-field-name">${{FIELD_LABELS[f]}}</span><span class="color-field-val">${{working[f]}}</span>`;
+      
+      el.appendChild(inp);
+      el.appendChild(textWrap);
+      fineTuneGrid.appendChild(el);
+    }});
+    
+    let displayName = currentTheme === 'custom' ? 'Custom' : PRESETS[currentTheme].name;
+    if (currentTheme !== 'custom' && JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS[currentTheme]))) {{
+      displayName += ' (modified)';
+    }}
+    document.getElementById('lblThemeName').textContent = 'theme: ' + displayName;
+    
+    let saved = null;
+    try {{
+      const raw = localStorage.getItem(window.__pulseTheme.KEY);
+      if (raw && window.__pulseTheme.parse(raw)) {{
+        saved = JSON.parse(raw);
+      }}
+    }} catch(e) {{}}
+    
+    let isDirty = true;
+    if (saved) {{
+      isDirty = (saved.preset !== currentTheme) || (JSON.stringify(saved.inputs) !== JSON.stringify(working));
+    }} else {{
+      isDirty = (currentTheme !== 'default') || (JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS.default)));
+    }}
+    
+    const btnSave = document.getElementById('btnSave');
+    btnSave.style.opacity = isDirty ? '1' : '0.5';
+    btnSave.style.cursor = isDirty ? 'pointer' : 'default';
+  }}
+  
+  document.getElementById('btnReset').onclick = () => {{
+    if (currentTheme === 'custom') currentTheme = lastPreset;
+    currentColors = null;
+    setColors(getWorkingColors());
+    renderUI();
+  }};
+  
+  document.getElementById('btnSave').onclick = () => {{
+    const working = getWorkingColors();
+    const payload = window.__pulseTheme.record(currentTheme, extractFields(working));
+    localStorage.setItem(window.__pulseTheme.KEY, JSON.stringify(payload));
+    renderUI();
+  }};
+  
+  try {{
+    const raw = localStorage.getItem(window.__pulseTheme.KEY);
+    const parsed = window.__pulseTheme.parse(raw);
+    if (parsed) {{
+      const saved = JSON.parse(raw);
+      currentTheme = saved.preset || 'default';
+      lastPreset = currentTheme === 'custom' ? 'default' : currentTheme;
+      const filteredParsed = extractFields(parsed);
+      if (currentTheme !== 'custom' && PRESETS[currentTheme]) {{
+         currentColors = (JSON.stringify(filteredParsed) === JSON.stringify(extractFields(PRESETS[currentTheme]))) ? null : filteredParsed;
+      }} else {{
+         currentColors = filteredParsed;
+      }}
+    }}
+  }} catch(e) {{}}
+  
+  setColors(getWorkingColors());
+  renderUI();
+}})();
+</script>
+"""
+    return _page("Settings", body, active="settings", wide=True, extra_css=page_css)

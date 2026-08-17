@@ -1,0 +1,38 @@
+# MARATHON.yaml — GH-135 Pulse dashboard consistency refactor
+#
+# Run:
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/MARATHON.yaml
+#
+# Single lane, four sequential phases — the phases are genuinely dependent (the row
+# component consumes the timestamp helper; the per-module fixes consume the row
+# component), so this is a chain, not a fan-out. Builder defaults to `codex`
+# (subscription-billed). Chain HALTS on the first phase that fails review.
+#
+# Contract: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY.md
+# Issue:    https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/135
+
+name: gh-135-pulse-dashboard-consistency
+#
+# Phases gh135-p1 and gh135-p2 are COMPLETE — both built by codex, approved by agy, and
+# committed (p1 cleaned up in c0d8053; p2 landed clean, zero import shims). Their briefs
+# are kept under briefs/ for the record but they are deliberately NOT in the runnable phase
+# list: a completed phase's lane parks at the attempt cap, and re-firing it re-renders its
+# RELAY.md and tries to rebuild finished work, halting the chain before later phases start.
+# This plan describes the REMAINING work. See the project doc's progress log for history.
+#
+# NOTE: marathon-drive's pre-advance gate defaults to `bash <root>/validate.sh`, which does
+# not exist in this repo — that is what halted p2 AFTER it was approved. Always pass an
+# explicit --pre-advance-cmd (see the project doc's "Firing" section). The gate is scoped to
+# the dashboard-relevant tests on purpose: `pytest tests/` has 15 pre-existing failures in
+# test_auto_promote.py + test_hiqs_pipeline.py (documented baseline from MARATHON-2026-07-16-B),
+# so a full-suite gate would fail on unrelated debt and block every phase.
+phases:
+
+  - id: gh135-p4
+    name: Section header casing system
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p4-headers.md
+    artifact: scripts/pulse_web.py
+    turn_timeout_s: 900
+    max_review_rounds: 2

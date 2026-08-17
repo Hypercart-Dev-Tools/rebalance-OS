@@ -1,6 +1,6 @@
 ---
 title: Focus 5 Float — Floating macOS Card Stack
-status: complete
+status: "All phases (0-5) + post-1.0 bottom-note done; blocked on operator dropping in .icns artwork (Figma Make in progress) before archive"
 doc_type: project-plan
 owner: Noel Saw
 created: 2026-06-23

@@ -1,0 +1,16 @@
+# 3-Eyes adoption of the incumbent Obsidian daily sync (GH-195 P8 Wave 2).
+
+id = "obsidian-daily-sync"
+command = "obsidian-daily-sync"
+description = "Write the daily Obsidian activity summary at 18:20 local."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.obsidian-daily-sync"]
+
+[schedule.launchd]
+StartCalendarInterval = { Hour = 18, Minute = 20 }
+
+[breakers]
+single_instance = true
+max_rss_gb = 8
+trip_after_failures = 3

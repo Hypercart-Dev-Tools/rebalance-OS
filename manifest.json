@@ -64,7 +64,9 @@
     {"name": "setup_github_token", "description": "Validate and store a GitHub PAT"},
     {"name": "run_preflight", "description": "Discover project candidates from vault and GitHub"},
     {"name": "confirm_projects", "description": "Write confirmed projects to the registry"},
-    {"name": "create_calendar_event", "description": "Create a Google Calendar event using the local OAuth token"}
+    {"name": "create_calendar_event", "description": "Create a Google Calendar event using the local OAuth token"},
+    {"name": "peek_source", "description": "Read the most-recent raw rows from one ingest source table (allowlisted, read-only)"},
+    {"name": "get_next_actions", "description": "Read the latest persisted 'what to do next' ranking without recomputing it"}
   ],
   "compatibility": {
     "platforms": ["darwin"],

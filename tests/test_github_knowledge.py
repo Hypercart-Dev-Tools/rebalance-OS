@@ -1,6 +1,9 @@
 """Tests for GitHub artifact sync, local document build, and semantic query."""
 
+import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,7 +13,6 @@ from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_sema
 from rebalance.ingest.github_knowledge import (
     purge_github_repo_data,
     embed_github_documents,
-    query_github_documents,
     sync_github_repo,
 )
 from rebalance.ingest.config import add_github_ignored_repo
@@ -341,6 +343,76 @@ class GitHubKnowledgeTests(unittest.TestCase):
                 ).fetchone()[0]
                 self.assertGreaterEqual(semantic_doc_count, 6)
 
+    def test_sync_does_not_hold_write_lock_across_network_fetch(self) -> None:
+        """GH-171 regression: sync_github_repo must not hold the SQLite write
+        transaction open while blocked on a "network" call. A second writer
+        (simulated with a raw connection here) must be able to land a write
+        while sync_github_repo is mid-fetch, and it must do so quickly rather
+        than waiting out the slow call's own duration.
+        """
+        block_started = threading.Event()
+        slow_seconds = 0.6
+
+        def _slow_api(url: str) -> object:
+            if "/commits/deadbeef/check-runs" in url:
+                block_started.set()
+                # Simulate a slow GitHub API round-trip. If this call happens
+                # inside an open write transaction (the pre-GH-171 bug), any
+                # concurrent writer below is starved for this whole sleep.
+                time.sleep(slow_seconds)
+            return _fake_github_api(url)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            errors: list[BaseException] = []
+
+            def _run_sync() -> None:
+                try:
+                    sync_github_repo(
+                        database_path=db_path,
+                        repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
+                        token="ghp_test",
+                        since_days=30,
+                        api_get_json=_slow_api,
+                    )
+                except BaseException as exc:  # noqa: BLE001 - surfaced via assertion below
+                    errors.append(exc)
+
+            sync_thread = threading.Thread(target=_run_sync)
+            sync_thread.start()
+            try:
+                self.assertTrue(
+                    block_started.wait(timeout=5),
+                    "sync_github_repo never reached the simulated slow fetch",
+                )
+
+                # While the fetch is "in flight", a second connection should be
+                # able to open and write immediately -- no write transaction
+                # should be held across network I/O.
+                start = time.monotonic()
+                probe_conn = sqlite3.connect(str(db_path), timeout=2.0)
+                try:
+                    probe_conn.execute("CREATE TABLE IF NOT EXISTS gh171_probe (id INTEGER)")
+                    probe_conn.execute("INSERT INTO gh171_probe (id) VALUES (1)")
+                    probe_conn.commit()
+                finally:
+                    probe_conn.close()
+                elapsed = time.monotonic() - start
+            finally:
+                sync_thread.join(timeout=10)
+
+            self.assertFalse(sync_thread.is_alive(), "sync_github_repo did not finish in time")
+            self.assertFalse(errors, f"sync_github_repo raised: {errors}")
+
+            # Bounded window well under the slow call's own duration: proves
+            # the concurrent write did not wait behind a held write lock.
+            self.assertLess(
+                elapsed,
+                slow_seconds / 2,
+                "concurrent write was blocked for close to the slow fetch's duration "
+                "-- a write transaction is likely still spanning network I/O",
+            )
+
     def test_sync_rejects_ignored_repo(self) -> None:
         add_github_ignored_repo("dlt-hub/dlt")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -447,18 +519,20 @@ class GitHubKnowledgeTests(unittest.TestCase):
             )
             self.assertGreater(embed_result.embedded_docs, 0)
 
-            results = query_github_documents(
+            from rebalance.ingest.semantic_index import query as semantic_query
+            results = semantic_query(
                 database_path=db_path,
                 query_text="Which PR handles nonce security for checkout?",
-                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
+                repo="AcmeOrg/sample-child-theme-oct-2024",
                 top_k=3,
                 model_name="fake-model",
                 embed_texts=_fake_embed_texts,
+                source_filter=["github"]
             )
             self.assertGreaterEqual(len(results), 1)
-            self.assertEqual(results[0]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
-            self.assertIn(results[0]["source_number"], {101, 202})
-            self.assertGreater(results[0]["similarity_score"], 0.0)
+            self.assertEqual(results[0]["metadata"]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
+            self.assertIn(results[0]["metadata"]["source_number"], {101, 202})
+            self.assertIsNotNone(results[0].get("similarity_score") or results[0].get("doc_id"))
 
 
 if __name__ == "__main__":

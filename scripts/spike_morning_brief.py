@@ -11,7 +11,7 @@ Design (mirrors PROJECT/2-WORKING/P1-MORNING-BRIEFING.md):
   - The LLM (Haiku) owns JUDGMENT + PROSE: it only ranks/narrates rows the
     collector handed it. It never invents tasks, deadlines, commits, or emails.
 
-If ANTHROPIC_API_KEY + the `anthropic` SDK are present, this prints a Haiku
+If GEMINI_API_KEY + the `google.generativeai` SDK are present, this prints a Gemini
 briefing. Otherwise it writes the candidate JSON and prints a deterministic
 grouped fallback so you still see a real briefing with zero external deps.
 
@@ -337,7 +337,7 @@ def render_fallback(data: dict[str, Any]) -> str:
 
 def render_haiku(data: dict[str, Any]) -> str | None:
     """If anthropic SDK + key are available, synthesize with Haiku. Else None."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("GEMINI_API_KEY"):
         return None
     try:
         import anthropic
@@ -401,7 +401,7 @@ def main() -> int:
         print(briefing)
     else:
         print(
-            "\n[synthesis] ANTHROPIC_API_KEY/anthropic SDK not available — "
+            "\n[synthesis] GEMINI_API_KEY/gemini SDK not available — "
             "showing deterministic fallback. (Haiku is the Phase 2 productization step.)\n",
             file=sys.stderr,
         )

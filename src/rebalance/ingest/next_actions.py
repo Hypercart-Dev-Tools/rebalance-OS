@@ -2,8 +2,8 @@
 
 This is the keystone the dashboard route AND the ``ask`` surface both call, so
 the two never drift: a flat, ranked "next actions" list assembled from the
-operator's own signals (calendar + GitHub + vault + sleuth + email) blended with
-a strictly-additive, de-duplicated delta of teammate calendar signal.
+operator's own signals (calendar + GitHub + vault + sleuth + email + figma)
+blended with a strictly-additive, de-duplicated delta of teammate calendar signal.
 
 Design (SOLID — distinct, testable functions):
 
@@ -42,9 +42,10 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from rebalance.ingest.calendar_config import (
     OPERATOR_CALENDAR_ID,
@@ -56,10 +57,11 @@ from rebalance.ingest.calendar_helpers import (
     event_duration_minutes,
     parse_calendar_dt,
 )
-from rebalance.ingest.config import get_pulse_config
+from rebalance.ingest.config import get_pulse_config, get_vault_path
+from rebalance.lib.time_ops import parse_date, parse_iso
 from rebalance.ingest.db import db_connection, run_migrations
-from rebalance.ingest.pulse import _query_day_activity
-from rebalance.tz_utils import local_tz
+from rebalance.ingest.pulse import _query_day_activity, collect_pulse_snapshot
+from rebalance.tz_utils import format_local, local_tz
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,23 @@ logger = logging.getLogger(__name__)
 # "what should I work on next" view, so they are excluded ONCE at the assembler
 # boundary (mirrors temp/ab_team_signal.NOISE_REPOS).
 NOISE_REPOS = {"hypercart-dev-tools/rebalance-git-pulse"}
+
+# priority_tier is 1 (highest) .. 5 (lowest). At/above this tier a project is a
+# low-cadence/periodic effort (e.g. a weekly devops repo) and is SOFT down-weighted
+# in the ranking — tagged for the synthesis and sunk in the deterministic fallback,
+# never muted. # ponytail: one threshold constant, no new config surface.
+_DEPRIORITIZE_TIER = 4
+
+
+def _is_low_priority(project: str | None, priority_by_project: dict[str, int]) -> bool:
+    """True when *project*'s effective priority_tier marks it low-cadence/periodic.
+
+    Drives both the ``[priority:low]`` prompt tag and the deterministic fallback
+    demotion, so the soft down-weight is defined in exactly one place.
+    """
+    if not project:
+        return False
+    return priority_by_project.get(project, 0) >= _DEPRIORITIZE_TIER
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +206,8 @@ class OperatorBundle:
     gh_comments: list[dict[str, Any]] = field(default_factory=list)
     vault_edits: list[dict[str, Any]] = field(default_factory=list)
     sleuth_activity: list[dict[str, Any]] = field(default_factory=list)
+    email_activity: list[dict[str, Any]] = field(default_factory=list)
+    figma_activity: list[dict[str, Any]] = field(default_factory=list)
 
 
 def assemble_day_bundle(
@@ -237,6 +258,8 @@ def assemble_day_bundle(
         gh_comments=[c for c in activity.gh_comments if _not_noise(c.get("repo"))],
         vault_edits=list(activity.vault_edits),
         sleuth_activity=list(activity.sleuth_activity),
+        email_activity=list(activity.email_activity),
+        figma_activity=list(activity.figma_activity),
     )
 
 
@@ -307,6 +330,9 @@ def build_rank_prompt(
     weights: SignalWeights,
     temporal_context: dict[str, Any] | None,
     blended: bool,
+    client_by_project: dict[str, str] | None = None,
+    client_roster: dict[str, list[str]] | None = None,
+    priority_by_project: dict[str, int] | None = None,
 ) -> str:
     """Assemble the ranking prompt — a flat ranked-list request, no analytics.
 
@@ -339,13 +365,26 @@ def build_rank_prompt(
         sections.append("\n".join(lines))
 
     # [OWN] operator candidates — the operator's own signal.
+    clients = client_by_project or {}
+    priorities = priority_by_project or {}
     if operator_candidates:
         lines = ["## [OWN] Operator signals"]
         for c in operator_candidates:
             proj = f" {{{c.project}}}" if c.project else ""
+            client = clients.get(c.project) if c.project else None
+            cli = f" [client:{client}]" if client else ""
+            pri = " [priority:low]" if _is_low_priority(c.project, priorities) else ""
             ev = f"  — {'; '.join(c.evidence)}" if c.evidence else ""
-            lines.append(f"- ({c.source}){proj} {c.title}{ev}")
+            lines.append(f"- ({c.source}){proj}{cli}{pri} {c.title}{ev}")
         sections.append("\n".join(lines))
+
+    # Client roster — the discrete client buckets, so synthesis can group items by
+    # client and surface an at-risk client whose projects are individually quiet.
+    if client_roster:
+        roster = ["## Client roster (group ranked items by client)"]
+        for client, projects in sorted(client_roster.items()):
+            roster.append(f"- {client}: {', '.join(sorted(projects))}")
+        sections.append("\n".join(roster))
 
     # [TEAMMATE] person-attributed blocks — classified project/duration/blocker
     # PREFERRED over verbatim detail (data minimization). The section header
@@ -394,6 +433,13 @@ def build_rank_prompt(
         f"- Penalize an item that merely restates one already counted "
         f"(redundancy_penalty={weights.redundancy_penalty})."
     )
+    if any(_is_low_priority(c.project, priorities) for c in operator_candidates):
+        lever_lines.append(
+            "- PRIORITY DOWN-WEIGHT: an item tagged [priority:low] belongs to a "
+            "low-cadence/periodic project (e.g. a weekly devops/sync repo). Rank it "
+            "BELOW comparable items unless its evidence is unusually strong or "
+            "time-critical. Down-weight, do not drop — it stays in the list."
+        )
     lever_lines.append(
         f"- A signal that dropped/disappeared moves the ranking "
         f"(drop_sensitivity={weights.drop_sensitivity})."
@@ -454,66 +500,175 @@ Ranked next actions:"""
 # ---------------------------------------------------------------------------
 
 
-def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
-    """Deterministic operator candidates with a stable ``rank_key`` each.
+# ---------------------------------------------------------------------------
+# Per-source candidate providers (registry-driven — Principle 3).
+#
+# Each provider owns ONE source's candidate shape and is registered on that
+# source's Collector via the ``candidates=`` seam (mirroring ``semantic_docs=``)
+# in index_ops.py. ``_operator_candidates`` walks the registry and calls them —
+# a new work signal reaches the ranked verdict by REGISTERING a collector, never
+# by editing this dispatch. ``rank_key`` sorts higher-signal first:
+#   sleuth 0 · email 1 · gh_items 2 · calendar 3 · gh_commits 4 · gh_comments 5
+#   · figma 6 · vault 7.
+# ATTESTED (D2): every candidate carries source, non-empty evidence, and why.
+# ---------------------------------------------------------------------------
 
-    The ordering here is the degraded-but-ranked fallback used verbatim when
-    synthesis is skipped or fails. ``rank_key`` sorts higher-signal first:
-    sleuth/assigned > github items > calendar > commits > comments > vault.
-    """
-    out: list[dict[str, Any]] = []
 
-    for s in bundle.sleuth_activity:
-        out.append({
+def sleuth_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    return [
+        {
             "rank_key": (0, s.get("last_seen_at") or ""),
             "title": s.get("message_preview") or "Sleuth reminder",
             "source": "sleuth",
             "evidence": [f"sleuth/{s.get('state', '')}"],
             "why": "open reminder assigned to/by you",
+        }
+        for s in bundle.sleuth_activity
+    ]
+
+
+def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    dropped = 0
+    for m in bundle.email_activity:
+        subject = (m.get("subject") or "").strip()
+        sender = (m.get("from_name") or m.get("from_address") or "").strip()
+        # Signal-quality guard: drop CONTENTLESS rows. The Gmail collector can land
+        # a message_id + labels while failing to populate the headers — on the live
+        # DB (2026-07-14) 119 of 124 rows are exactly that: no sender, no subject.
+        # Such a row has nothing to attest with, and email ranks at tier 1 — ABOVE
+        # your open GitHub items — so admitting it would push "(no subject) from
+        # unknown sender" to the top of the list. That is the bare verdict the
+        # Attested pillar forbids. A row needs a subject OR a sender to earn a rank.
+        if not subject and not sender:
+            dropped += 1
+            continue
+        out.append({
+            "rank_key": (1, m.get("received_at") or ""),
+            "title": subject or "(no subject)",
+            "source": "email",
+            "evidence": [f"from {sender or 'unknown sender'}", m.get("received_at") or ""],
+            "why": "email received in the day window",
         })
+    if dropped:
+        # NON-SILENT: a dropped row is an INGEST defect, not noise to swallow. Source
+        # freshness reports "ok" whenever rows exist, so a collector writing header-less
+        # rows would otherwise look healthy while contributing nothing. Say it out loud.
+        logger.warning(
+            "email_candidates: dropped %d contentless email row(s) (no sender, no subject) "
+            "— the Gmail collector is landing rows without headers; ranking is starved, "
+            "not empty",
+            dropped,
+        )
+    return out
+
+
+def github_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    """Three candidate classes from the one GitHub source: items, commits, comments."""
+    out: list[dict[str, Any]] = []
     for it in bundle.gh_items:
         out.append({
-            "rank_key": (1, it.get("updated_at") or it.get("created_at") or ""),
+            "rank_key": (2, it.get("updated_at") or it.get("created_at") or ""),
             "title": f"{it.get('item_type', 'item')} #{it.get('number')}: {it.get('title', '')}",
             "source": "github",
             "project": it.get("repo"),
             "evidence": [it.get("html_url") or it.get("repo") or ""],
             "why": "open GitHub item you authored/own",
         })
-    for b in bundle.calendar_blocks:
-        out.append({
-            "rank_key": (2, b.get("time") or ""),
-            "title": b.get("summary") or "Calendar block",
-            "source": "calendar",
-            "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
-            "why": "scheduled block on your calendar",
-        })
     for c in bundle.gh_commits:
+        direct_push = c.get("source_kind") == "direct_push"
+        paths = [path for path in c.get("paths", []) if path][:5]
+        evidence = [c.get("html_url") or (c.get("sha") or "")]
+        evidence.extend(paths)
         out.append({
-            "rank_key": (3, c.get("committed_at") or ""),
+            "rank_key": (4, c.get("committed_at") or ""),
             "title": c.get("subject") or "commit",
             "source": "github",
             "project": c.get("repo"),
-            "evidence": [c.get("html_url") or (c.get("sha") or "")],
-            "why": "recent commit (continue / push?)",
+            "evidence": evidence,
+            "why": (
+                "unreviewed direct branch push (inspect or continue?)"
+                if direct_push else "recent commit (continue / push?)"
+            ),
         })
     for cm in bundle.gh_comments:
         out.append({
-            "rank_key": (4, cm.get("created_at") or ""),
+            "rank_key": (5, cm.get("created_at") or ""),
             "title": cm.get("preview") or "comment",
             "source": "github",
             "project": cm.get("repo"),
             "evidence": [cm.get("html_url") or ""],
             "why": "thread you engaged on",
         })
-    for v in bundle.vault_edits:
+    return out
+
+
+def calendar_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    return [
+        {
+            "rank_key": (3, b.get("time") or ""),
+            "title": b.get("summary") or "Calendar block",
+            "source": "calendar",
+            "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
+            "why": "scheduled block on your calendar",
+        }
+        for b in bundle.calendar_blocks
+    ]
+
+
+def figma_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    # ponytail: this arm ships DORMANT — figma_activity is empty until a
+    # configured `figma_file_keys` allow-list turns the opt-in collector on.
+    # It is correct-and-idle, not dead: Figma is an explicit product signal.
+    out: list[dict[str, Any]] = []
+    for fc in bundle.figma_activity:
+        handle = fc.get("user_handle") or "someone"
         out.append({
-            "rank_key": (5, v.get("last_modified") or ""),
+            "rank_key": (6, fc.get("created_at") or ""),
+            "title": fc.get("message") or "Figma comment",
+            "source": "figma",
+            "project": fc.get("file_key"),
+            "evidence": [f"{handle} on figma/{fc.get('file_key', '')}"],
+            "why": "unresolved Figma comment on a watched file",
+        })
+    return out
+
+
+def vault_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for v in bundle.vault_edits:
+        # Skip rebalance's OWN generated next-actions file: it is rewritten every
+        # refresh, so it would otherwise always show up as a "recent edit" and
+        # rank itself (a self-reference feedback loop).
+        if _is_generated_next_actions_file(v.get("rel_path") or "", v.get("title") or ""):
+            continue
+        out.append({
+            "rank_key": (7, v.get("last_modified") or ""),
             "title": v.get("title") or v.get("rel_path") or "vault note",
             "source": "vault",
             "evidence": [v.get("rel_path") or ""],
             "why": "recently edited note",
         })
+    return out
+
+
+def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    """Deterministic operator candidates — a WALK over the collector registry.
+
+    Each registered :class:`Collector` with a ``candidates=`` provider owns its
+    own candidate shape; this walks them all and sorts by ``rank_key`` (higher
+    signal class first, most-recent first within a class). There is NO per-source
+    dispatch here: a source reaches the ranked verdict by registering a collector,
+    not by editing this function (GUIDING-PRINCIPLES Principle 3). The import is
+    local so the ranker never hard-depends on the registry module at import time.
+    """
+    from rebalance.ingest.index_ops import COLLECTORS
+
+    out: list[dict[str, Any]] = []
+    for collector in COLLECTORS.values():
+        if collector.candidates is None:
+            continue
+        out.extend(collector.candidates(bundle))
 
     # Higher signal class first; within a class, most-recent first.
     out.sort(key=lambda c: (c["rank_key"][0], _neg_iso(c["rank_key"][1])))
@@ -530,12 +685,23 @@ def _neg_iso(value: str) -> str:
     return "".join(chr(0x10FFFD - ord(ch)) if ord(ch) < 0x10FFFD else ch for ch in value)
 
 
+def _is_generated_next_actions_file(rel_path: str, title: str) -> bool:
+    """True for rebalance's own generated What-To-Do-Next vault file, so it is
+    excluded from next-action candidates (it must not rank itself).
+
+    ``VAULT_NEXT_ACTIONS_RELPATH`` is defined later in the module (with the
+    render sink); referenced here at call time, which is fine."""
+    fname = VAULT_NEXT_ACTIONS_RELPATH.rsplit("/", 1)[-1].lower()  # "what to do next.md"
+    stem = fname.rsplit(".", 1)[0]                                  # "what to do next"
+    return (rel_path or "").lower().endswith(fname) or (title or "").strip().lower() == stem
+
+
 def _teammate_candidate(blk: dict[str, Any]) -> dict[str, Any]:
     """Deterministic candidate for one teammate delta block."""
     who = blk.get("person") or "teammate"
     dur = blk.get("duration_minutes") or 0
     return {
-        "rank_key": (1, blk.get("time") or ""),  # teammate calendar ~ github tier
+        "rank_key": (2, blk.get("time") or ""),  # teammate calendar ~ gh_items tier
         "title": blk.get("summary") or "Teammate block",
         "person": who,
         "source": "calendar",
@@ -606,6 +772,28 @@ def _strip_markdown(s: str) -> str:
     return s.strip().strip("*`").strip()
 
 
+# An unfilled ``<...>`` template token. A small/weak model sometimes echoes the
+# OUTPUT CONTRACT format spec (``<rank>. <title> | person=<operator|Name> ...``)
+# verbatim instead of substituting real values. Such a line is junk, not a real
+# action — reject it so the deterministic fallback survives (this was the live
+# Qwen-0.6B failure mode: placeholder titles persisted because the OTHER fields
+# were also echoed and passed the structured-field gate).
+_PLACEHOLDER_VALUE_RE = re.compile(r"^<[^<>]+>$")
+_TITLE_PLACEHOLDER_RE = re.compile(r"<\s*(?:rank|title)\s*>", re.IGNORECASE)
+
+
+def _value_is_placeholder(val: str) -> bool:
+    """True when *val* is wholly an unfilled ``<...>`` template token."""
+    return bool(_PLACEHOLDER_VALUE_RE.match((val or "").strip()))
+
+
+def _title_is_placeholder(title: str) -> bool:
+    """True when the model echoed the literal ``<rank>``/``<title>`` format spec
+    (or a bare ``<...>`` token) instead of producing a real title."""
+    t = (title or "").strip()
+    return bool(_TITLE_PLACEHOLDER_RE.search(t) or _PLACEHOLDER_VALUE_RE.match(t))
+
+
 def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
     """Parse the model's flat ranked list back into :class:`RankedAction`.
 
@@ -634,6 +822,13 @@ def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
         parts = re.split(r"\s*\|\s*", rest)
         title = _strip_markdown(parts[0])
 
+        # Reject a line whose title is an unfilled template token (e.g. the model
+        # echoed `<rank>. <title>`). When the model echoes the WHOLE spec, every
+        # line is dropped here → parsed == [] → caller keeps the deterministic
+        # fallback instead of surfacing placeholder junk.
+        if _title_is_placeholder(title):
+            continue
+
         person: str | None = None
         source = ""
         project: str | None = None
@@ -647,6 +842,10 @@ def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
             key, _, val = fld.partition("=")
             key = key.strip().lower()
             val = val.strip()
+            # An unfilled `<...>` field value (e.g. `source=<source>`) is the
+            # echoed spec — treat it as omitted rather than literal junk.
+            if _value_is_placeholder(val):
+                continue
             if key == "person":
                 person = None if val.lower() in ("operator", "self", "me", "") else val
             elif key == "source":
@@ -755,6 +954,254 @@ def _shared_event_ids(
     return operator_ids & teammate_ids
 
 
+def _signal_views(
+    database_path: Path,
+) -> tuple[dict[str, str], dict[str, int], dict[str, list[str]]]:
+    """Build the per-candidate client + priority lookups and the client roster.
+
+    Both lookups map a project's name AND each of its repos to a value, so an
+    operator candidate keyed by ``owner/repo`` resolves. ``client_by_project`` ->
+    effective client; ``priority_by_project`` -> effective ``priority_tier``
+    (operator-local priority rules overlaid via ``apply_project_priorities``, so a
+    configured tier for e.g. git-pulse is honored). ``roster`` is the client
+    buckets. Best-effort: any failure returns empties so ranking is never blocked
+    by this metadata.
+    """
+    try:
+        from rebalance.ingest.project_priority import apply_project_priorities
+        from rebalance.ingest.registry import (
+            effective_client,
+            get_clients,
+            get_projects,
+        )
+
+        client_by_project: dict[str, str] = {}
+        priority_by_project: dict[str, int] = {}
+        for project in apply_project_priorities(get_projects(database_path)):
+            keys = [project["name"], *(project.get("repos") or [])]
+            client = effective_client(project.get("custom_fields"))
+            tier = project.get("priority_tier")
+            for key in keys:
+                if client:
+                    client_by_project[key] = client
+                if tier is not None:
+                    priority_by_project[key] = int(tier)
+        return client_by_project, priority_by_project, get_clients(database_path)
+    except Exception as exc:  # noqa: BLE001 — this metadata is never load-bearing
+        logger.warning("_signal_views: %s", exc)
+        return {}, {}, {}
+
+
+def _resolve_signal_day(today: date | datetime | str, *, tz: Any) -> date:
+    """Normalize *today* to a local date for deep-work signal windows."""
+    if isinstance(today, datetime):
+        return today.astimezone(tz).date()
+    if isinstance(today, date):
+        return today
+    raw = (today or "").strip()
+    if not raw:
+        raise ValueError("today must not be empty")
+    parsed = parse_iso(raw, force_utc=False)
+    if parsed is not None:
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(tz).date()
+        return parsed.date()
+    d = parse_date(raw)
+    if d is not None:
+        return d
+    raise ValueError(f"Invalid date string: {raw}")
+
+
+def _project_activity_rows_for_day(
+    snapshot: Any,
+    *,
+    repos: set[str],
+) -> list[str]:
+    """Return concrete GitHub-backed activity rows for one project's day."""
+    rows: list[str] = []
+
+    def in_project(repo: str | None) -> bool:
+        return (repo or "").lower() in repos
+
+    for commit in snapshot.today.gh_commits:
+        if not in_project(commit.get("repo")):
+            continue
+        sha = commit.get("sha") or "commit"
+        subject = (commit.get("subject") or "").strip()
+        rows.append(f"{commit.get('repo')} commit {sha} {subject}".strip())
+
+    for item in snapshot.today.gh_items:
+        if not in_project(item.get("repo")):
+            continue
+        kind = "pr" if item.get("item_type") == "pull_request" else (item.get("item_type") or "item")
+        rows.append(
+            f"{item.get('repo')} {kind} #{item.get('number')} {(item.get('title') or '').strip()}".strip()
+        )
+
+    for comment in snapshot.today.gh_comments:
+        if not in_project(comment.get("repo")):
+            continue
+        preview = (comment.get("preview") or "").strip()
+        rows.append(
+            f"{comment.get('repo')} comment #{comment.get('item_number')} {preview}".strip()
+        )
+
+    for watched in getattr(snapshot, "watched_repos", []) or []:
+        if not in_project(watched.get("repo")):
+            continue
+        counts: list[str] = []
+        commits = int(watched.get("commits") or 0)
+        items = len(watched.get("items") or [])
+        comments = int(watched.get("comments") or 0)
+        if commits:
+            counts.append(f"{commits} commit{'s' if commits != 1 else ''}")
+        if items:
+            counts.append(f"{items} item{'s' if items != 1 else ''}")
+        if comments:
+            counts.append(f"{comments} comment{'s' if comments != 1 else ''}")
+        if counts:
+            rows.append(f"{watched.get('repo')} watched activity ({', '.join(counts)})")
+
+    return rows
+
+
+def _open_items_for_projects(
+    database_path: Path,
+    *,
+    project_repos: dict[str, list[str]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Read open GitHub items per project from the existing collector tables."""
+    out = {project: [] for project in project_repos}
+    repo_to_projects: dict[str, set[str]] = {}
+    for project, repos in project_repos.items():
+        for repo in repos:
+            repo_to_projects.setdefault(repo.lower(), set()).add(project)
+
+    if not repo_to_projects:
+        return out
+
+    placeholders = ",".join("?" for _ in repo_to_projects)
+    from rebalance.ingest.db import ensure_github_schema
+
+    with db_connection(database_path, ensure_github_schema) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT repo_full_name, item_type, number, title, html_url,
+                   created_at, updated_at
+            FROM github_items
+            WHERE LOWER(repo_full_name) IN ({placeholders})
+              AND LOWER(COALESCE(state, '')) = 'open'
+            ORDER BY COALESCE(updated_at, created_at) DESC, number DESC
+            """,
+            tuple(repo_to_projects),
+        ).fetchall()
+
+    for row in rows:
+        repo = (row["repo_full_name"] or "").lower()
+        for project in repo_to_projects.get(repo, set()):
+            out[project].append(
+                {
+                    "repo": row["repo_full_name"],
+                    "item_type": row["item_type"],
+                    "number": row["number"],
+                    "title": row["title"] or "",
+                    "html_url": row["html_url"] or "",
+                    "updated_at": row["updated_at"] or row["created_at"] or "",
+                }
+            )
+    return out
+
+
+def compute_deep_work_signals(
+    database_path: Path,
+    today: date | datetime | str,
+    lookback_days: int = 7,
+) -> dict[str, dict[str, Any]]:
+    """Compute read-only cross-day streak/stall signals per active project.
+
+    Reuses ``collect_pulse_snapshot()`` once per day across the lookback window,
+    with ``github_token=None`` so the signal stays hermetic and never triggers a
+    live GitHub assigned-issues fetch.
+    """
+    if lookback_days <= 0 or not database_path.exists():
+        return {}
+
+    from rebalance.ingest.registry import get_projects
+
+    pulse_cfg = get_pulse_config()
+    tz_name = pulse_cfg.get("pulse_timezone") or local_tz().key
+    tz = ZoneInfo(tz_name)
+    github_login = pulse_cfg.get("github_login") or ""
+    slack_user_id = pulse_cfg.get("slack_user_id")
+    anchor_day = _resolve_signal_day(today, tz=tz)
+
+    active_projects = get_projects(database_path, status="active")
+    project_repos = {
+        project["name"]: [repo for repo in (project.get("repos") or []) if repo]
+        for project in active_projects
+    }
+    daily_rows: dict[str, dict[str, list[str]]] = {
+        project["name"]: {} for project in active_projects
+    }
+
+    for offset in range(lookback_days):
+        day = anchor_day - timedelta(days=offset)
+        snapshot = collect_pulse_snapshot(
+            database_path,
+            github_login=github_login,
+            slack_user_id=slack_user_id,
+            timezone_name=tz_name,
+            github_token=None,
+            now=datetime(day.year, day.month, day.day, 12, tzinfo=tz),
+        )
+        for project_name, repos in project_repos.items():
+            daily_rows[project_name][day.isoformat()] = _project_activity_rows_for_day(
+                snapshot,
+                repos={repo.lower() for repo in repos},
+            )
+
+    open_items = _open_items_for_projects(database_path, project_repos=project_repos)
+    today_key = anchor_day.isoformat()
+    yesterday_key = (anchor_day - timedelta(days=1)).isoformat()
+
+    signals: dict[str, dict[str, Any]] = {}
+    for project in active_projects:
+        project_name = project["name"]
+        streak_days = 0
+        streak_dates: list[str] = []
+        recent_activity: list[dict[str, Any]] = []
+        streak_open = True
+        for offset in range(lookback_days):
+            day_key = (anchor_day - timedelta(days=offset)).isoformat()
+            day_rows = list(daily_rows.get(project_name, {}).get(day_key, []))
+            if day_rows:
+                recent_activity.append({"date": day_key, "rows": day_rows})
+            if streak_open and day_rows:
+                streak_days += 1
+                streak_dates.append(day_key)
+            else:
+                streak_open = False
+        today_rows = list(daily_rows.get(project_name, {}).get(today_key, []))
+        yesterday_rows = list(daily_rows.get(project_name, {}).get(yesterday_key, []))
+        project_open_items = list(open_items.get(project_name, []))
+        signals[project_name] = {
+            "project": project_name,
+            "repos": list(project_repos.get(project_name, [])),
+            "streak_days": streak_days,
+            "possible_stall": bool(yesterday_rows and not today_rows and project_open_items),
+            "evidence": {
+                "streak_dates": streak_dates,
+                "recent_activity": recent_activity,
+                "today_date": today_key,
+                "today_rows": today_rows,
+                "yesterday_date": yesterday_key,
+                "yesterday_rows": yesterday_rows,
+                "open_items": project_open_items,
+            },
+        }
+    return signals
+
+
 def rank_next_actions(
     database_path: Path,
     *,
@@ -829,11 +1276,22 @@ def rank_next_actions(
             computed_at=datetime.now(timezone.utc).isoformat(),
         )
 
+    # Client + priority lookups (computed once; used for both the deterministic
+    # demotion below and the synthesis prompt).
+    client_by_project, priority_by_project, client_roster = _signal_views(database_path)
+
     # Deterministic candidate objects (operator + additive teammate delta).
     operator_actions = [
         _candidate_to_action(c, i)
         for i, c in enumerate(operator_candidates_raw, 1)
     ]
+    # Soft down-weight in the fallback floor: low-priority (periodic) projects sink
+    # to the bottom of the operator arm via a STABLE sort (original recency order
+    # preserved within each group), so the down-weight holds even when synthesis is
+    # skipped or fails. Not a drop — they remain in the list.
+    operator_actions.sort(
+        key=lambda a: 1 if _is_low_priority(a.project, priority_by_project) else 0
+    )
     teammate_actions = [
         _candidate_to_action(_teammate_candidate(b), 0) for b in teammate_delta
     ]
@@ -852,11 +1310,21 @@ def rank_next_actions(
             weights=weights,
             temporal_context=_operator_temporal_context(database_path, now, tz),
             blended=blended,
+            client_by_project=client_by_project,
+            client_roster=client_roster,
+            priority_by_project=priority_by_project,
         )
         try:
             from rebalance.ingest.querier import _synthesize_with_fallback
 
-            synthesis, model_used = _synthesize_with_fallback(prompt)
+            # thinking_budget=0 DISABLES the model's hidden reasoning: gemini-2.5
+            # is a reasoning model that otherwise spent ~1900 of 2048 tokens
+            # "thinking" and truncated the ranked list to ~2 items at MAX_TOKENS.
+            # With thinking off the whole budget goes to the answer (the full
+            # ranked list). 2048 caps the answer length.
+            synthesis, model_used = _synthesize_with_fallback(
+                prompt, max_tokens=2048, thinking_budget=0
+            )
             parsed = _parse_ranked_synthesis(synthesis)
             # STRUCTURED acceptance gate: only trust the parse over the
             # deterministic fallback when it is non-empty AND at least half its
@@ -927,8 +1395,11 @@ def _operator_blocks_over_horizon(
     operator's own future block. Same-local-day comparison is preserved (each block
     keeps its ``local_day``); this only widens which operator days are visible.
     """
+    start_d = parse_date(local_day)
+    if start_d is None:
+        start_d = datetime.now(tz).date() if hasattr(tz, "utcoffset") else datetime.now(timezone.utc).date()
     horizon_days = {
-        (datetime.fromisoformat(local_day).date() + timedelta(days=i)).isoformat()
+        (start_d + timedelta(days=i)).isoformat()
         for i in range(days_forward + 1)
     }
     rows = conn.execute(
@@ -1144,3 +1615,105 @@ def get_ranked_meta(database_path: Path) -> dict[str, Any]:
         "model_used": row["model_used"] if row else None,
         "row_count": n,
     }
+
+
+# ---------------------------------------------------------------------------
+# Vault render sink — the fixed Obsidian dashboard file (Task, 2026-06-29)
+#
+# Writes the SAME ranked output as the route/cache to one fixed vault file so
+# the vault is the calm daily operator surface (P1-SIGNAL). This is a render
+# sink, NOT a second ranker — it serializes a RankedNextActions produced by
+# rank_next_actions(); it never re-ranks. LOCAL-ONLY: the vault is on-device and
+# is not the pushed git-pulse repo, so teammate `person` labels here do not
+# cross the export boundary (mirrors the ranked_next_actions cache invariant).
+# ---------------------------------------------------------------------------
+
+# Fixed, overwrite-in-place dashboard file inside the Obsidian vault.
+VAULT_NEXT_ACTIONS_RELPATH = "Dashboards/What To Do Next.md"
+
+
+def _fmt_local_stamp(iso_utc: str, tz: Any) -> str:
+    """Format an ISO-8601 (UTC) timestamp as a local human stamp for the banner."""
+    return format_local(iso_utc, "%Y-%m-%d %H:%M %Z", tz=tz) or (iso_utc or "unknown")
+
+
+def render_next_actions_markdown(
+    result: RankedNextActions, *, now: datetime | None = None
+) -> str:
+    """Render *result* to the fixed-vault-file markdown (single-writer, generated).
+
+    Pure string-from-dataclass; no I/O. The banner carries the generated-file
+    contract + provenance (when, which model, item count, blended vs operator-only)
+    so a reader can trust freshness at a glance.
+    """
+    tz = local_tz()
+    stamp = _fmt_local_stamp(result.computed_at, tz)
+    model = result.model_used or "deterministic (no model)"
+    n = len(result.ranked)
+    blend = "team-blended" if result.blended else "operator-only"
+
+    lines: list[str] = [
+        "# What To Do Next",
+        "",
+        "> [!note] Generated by rebalance-OS — do not edit by hand.",
+        (
+            f"> Overwritten on each refresh. Last updated **{stamp}** · "
+            f"model `{model}` · {n} item{'' if n == 1 else 's'} · {blend}."
+        ),
+    ]
+    if result.note:
+        # The note carries provenance (team-blend stats) AND any degradation
+        # ("synthesis failed…"); render it neutrally rather than as an alarm.
+        lines.append(">")
+        lines.append(f"> _{result.note}_")
+    lines.append("")
+
+    if not result.ranked:
+        lines.append("_Nothing surfaced to rank right now._")
+        lines.append("")
+        return "\n".join(lines)
+
+    for a in result.ranked:
+        meta: list[str] = []
+        if a.source:
+            meta.append(a.source)
+        if a.project:
+            meta.append(a.project)
+        if a.person:
+            meta.append(f"👤 {a.person}")
+        if a.automation:
+            meta.append("⚙️ automatable")
+        meta_str = f" _({' · '.join(meta)})_" if meta else ""
+        lines.append(f"{a.rank}. **{a.title}**{meta_str}")
+        if a.why:
+            lines.append(f"   {a.why}")
+        if a.evidence:
+            lines.append(f"   ↳ evidence: {'; '.join(a.evidence)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_next_actions_to_vault(
+    result: RankedNextActions,
+    *,
+    vault_path: str | Path | None = None,
+    now: datetime | None = None,
+) -> Path | None:
+    """Write the ranked markdown to the fixed vault file. Returns the path, or None.
+
+    Resolves the vault root from *vault_path* (override) or ``get_vault_path()``
+    (config). Returns None when no vault is configured — a no-op, not an error.
+    Creates the ``Dashboards/`` parent if missing and overwrites the file in
+    place (single-writer). Raises only on a genuine filesystem error so the
+    caller (precompute hook) can record it; the hook wraps this in try/except so
+    a vault-write failure never breaks a refresh.
+    """
+    vp = vault_path if vault_path is not None else get_vault_path()
+    if not vp:
+        logger.info("next_actions: no vault_path configured; skipping vault write")
+        return None
+    target = Path(vp).expanduser() / VAULT_NEXT_ACTIONS_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_next_actions_markdown(result, now=now), encoding="utf-8")
+    logger.info("next_actions: wrote vault dashboard %s", target)
+    return target

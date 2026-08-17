@@ -12,8 +12,11 @@ enum Theme {
 
     // MARK: Color roles (light / dark)
 
-    /// Window / content background — `#FFFFFF` light, `#1E1E20` dark.
-    static let window      = dynamic(light: 0xFFFFFF, dark: 0x1E1E20)
+    /// Window / content background — slightly translucent to sit over the glass shell.
+    static let window      = dynamicA(light: (0xFCFCFD, 0.96), dark: (0x222327, 0.92))
+    /// Glass shell fill + edge, matching the reference panel treatment.
+    static let glassFill   = dynamicA(light: (0xFCFCFD, 0.96), dark: (0x222327, 0.90))
+    static let glassEdge   = dynamicA(light: (0x000000, 0.10), dark: (0xFFFFFF, 0.10))
     /// Sidebar & toolbar fill — `#ECEBE7` light, `#252528` dark.
     static let sidebar     = dynamic(light: 0xECEBE7, dark: 0x252528)
     /// Elevated controls / search field / phrase well — `#F4F3EF` light, `#2B2B2E` dark.
@@ -35,12 +38,17 @@ enum Theme {
     static let accent      = dynamic(light: 0x2F6BED, dark: 0x4D86FF)
     /// 10% / 16% accent tint used for the selected row & active filter fill.
     static let accentSoft  = dynamicA(light: (0x2F6BED, 0.10), dark: (0x4D86FF, 0.16))
+    /// Attention / warning amber used by the status badge.
+    static let attention   = Color(hex: 0xF0A020)
     /// Hairline separator — 7% black / 9% white.
     static let separator   = dynamicA(light: (0x000000, 0.07), dark: (0xFFFFFF, 0.09))
     /// Lighter hairline — 5% black / 6% white.
     static let separator2  = dynamicA(light: (0x000000, 0.05), dark: (0xFFFFFF, 0.06))
     /// Row hover / chip fill — 4.5% black / 6% white.
     static let hover       = dynamicA(light: (0x000000, 0.045), dark: (0xFFFFFF, 0.06))
+    /// Hover treatment for the close/hide button only.
+    static let destructiveHover = dynamicA(light: (0xE2483D, 0.14), dark: (0xFF6B63, 0.18))
+    static let destructiveText  = dynamic(light: 0xD13F39, dark: 0xFF8C85)
     /// Window border.
     static let windowBorder = dynamicA(light: (0x000000, 0.08), dark: (0xFFFFFF, 0.10))
 
@@ -65,13 +73,13 @@ enum Theme {
         static let l: CGFloat = 16, xl: CGFloat = 24, xxl: CGFloat = 32
     }
     enum Radius {
-        static let control: CGFloat = 6, row: CGFloat = 8, window: CGFloat = 11, sheet: CGFloat = 14
+        static let control: CGFloat = 8, row: CGFloat = 12, window: CGFloat = 16, sheet: CGFloat = 16
     }
 
     // MARK: Type ramp — SF Pro / SF Mono, three sizes only
 
-    /// 17 · Semibold — titles, shortcut, stats.
-    static let display = Font.system(size: 17, weight: .semibold)
+    /// 14 · Semibold — repo-name display (the card title; sole Theme.display consumer). GH-110.
+    static let display = Font.system(size: 14, weight: .semibold)
     /// 13 · Regular — list, controls, editor body.
     static let body    = Font.system(size: 13)
     /// 13 · Medium — emphasized body (selected row, control labels).

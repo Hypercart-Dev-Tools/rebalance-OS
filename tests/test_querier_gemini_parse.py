@@ -168,5 +168,46 @@ class TestSynthesizeWithFallback(unittest.TestCase):
         self.assertEqual(model, f"{DEFAULT_CHAT_MODEL} (failed)")
 
 
+class TestThinkingBudget(unittest.TestCase):
+    """thinking_budget=0 must disable Gemini reasoning so a long structured list
+    is not truncated to a couple of items at finishReason=MAX_TOKENS."""
+
+    def _capture_body(self, **kwargs: object) -> dict:
+        captured: dict = {}
+
+        def fake_urlopen(req, *_a, **_k):
+            captured["body"] = json.loads(req.data.decode())
+            return _FakeResp({"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _synthesize_gemini("prompt", api_key="k", **kwargs)
+        return captured["body"]
+
+    def test_thinking_config_set_when_budget_given(self) -> None:
+        body = self._capture_body(thinking_budget=0)
+        self.assertEqual(
+            body["generationConfig"]["thinkingConfig"]["thinkingBudget"], 0
+        )
+
+    def test_no_thinking_config_by_default(self) -> None:
+        body = self._capture_body()
+        self.assertNotIn("thinkingConfig", body["generationConfig"])
+
+    def test_fallback_forwards_thinking_budget_to_gemini(self) -> None:
+        captured: dict = {}
+
+        def fake_urlopen(req, *_a, **_k):
+            captured["body"] = json.loads(req.data.decode())
+            return _FakeResp({"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+        with patch("rebalance.ingest.config.get_gemini_api_key", return_value="k"), \
+                patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _text, model = _synthesize_with_fallback("p", thinking_budget=0)
+        self.assertEqual(
+            captured["body"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 0
+        )
+        self.assertEqual(model, DEFAULT_GEMINI_MODEL)
+
+
 if __name__ == "__main__":
     unittest.main()

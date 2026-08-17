@@ -15,12 +15,14 @@ job.
 | `vault-sync` | hourly at :15, 06:15–23:15 | `scripts/vault_sync.sh` | `refresh_index(db_path, scope=["vault", "semantic"])` | `vault_path` in temp/rbos.config | vault raw tables + semantic index fresh within the hour |
 | `github-sync` | hourly at :45, 06:45–23:45 | `scripts/github_sync.sh` | `refresh_index(db_path, scope=["github", "focus5"])` | GitHub token (keyring/config) for github; Focus 5 needs none | github raw tables fresh (semantic backfill deferred to daily-sync); Focus 5 roster recomputed hourly |
 | `pulse-sync` | hourly at :00, 06:00–23:00 | `scripts/pulse_sync.sh` | `publish_pulse(db_path, dry_run=False, push=True)` | pulse_* keys in temp/rbos.config; local clone at pulse_target_path | markdown status page pushed to private repo (only when changed) |
-| `pulse-web-sync` | every 30 min at :00/:30, 06:00–23:30 | `scripts/pulse_web_sync.sh` | `scripts/pulse_web.py` | `vault_path` in temp/rbos.config (locates "0. Goals.md") | `web/pulse.html` regenerated atomically (local only, no network) |
+| `pulse-web-sync` | every 30 min at :08/:38, 06:00–23:38 | `scripts/pulse_web_sync.sh` | `scripts/pulse_web.py` | `vault_path` in temp/rbos.config (locates "0. Goals.md") | `web/pulse.html` regenerated atomically (local only, no network) |
 | `pulse-server` | daemon: RunAtLoad + KeepAlive, ThrottleInterval 30s | `scripts/pulse_server.sh` | `scripts/pulse_server.py --port 8767` | port 8767 free | FastAPI server on 127.0.0.1:8767 (loopback only) |
-| `pulse-warning-watch` | every 15 min at :00/:15/:30/:45, around the clock + RunAtLoad | — (python direct) | `scripts/pulse_warning_watch.py --url http://127.0.0.1:8767/` | pulse-server running on 8767 | `temp/pulse-warning-watch.jsonl` (one record per check) |
-| `health-check` | hourly at :00, around the clock | — (python direct) | `scripts/health_issue_reporter.py --close` (FAIL-only, no LLM) | GitHub token for issue filing | GitHub issues opened/closed on failing doctor checks |
-| `health-check-triage` | 3×/day at 08:00, 14:00, 20:00 | — (python direct) | `scripts/health_issue_reporter.py --warn --close --llm-triage --llm-daily-limit 8 --llm-max-per-run 5` | ANTHROPIC_API_KEY in rendered plist or keyring | LLM-triaged GitHub issues; quota circuit breakers CB-1/2/3 |
-| `obsidian-rollover` | daily 00:00 (or next wake); RunAtLoad must stay **false** | `utils/obsidian_rollover.sh` | `utils/obsidian_daily_rollover.py` | Full Disk Access via bash wrapper (TCC) | daily note rolled over; log in `~/Library/Logs/rebalance-os/` |
+| `pulse-warning-watch` | every 15 min at :07/:22/:37/:52, around the clock + RunAtLoad | — (python direct) | `scripts/pulse_warning_watch.py --url http://127.0.0.1:8767/` | pulse-server running on 8767 | `temp/pulse-warning-watch.jsonl` (one record per check) |
+| `health-check` | hourly at :10, around the clock | — (python direct) | `scripts/health_issue_reporter.py --close` (FAIL-only, no LLM) | GitHub token for issue filing | GitHub issues opened/closed on failing doctor checks |
+| `health-check-triage` | 3×/day at 08:25, 14:25, 20:25 | — (python direct) | `scripts/health_issue_reporter.py --warn --close --llm-triage --llm-daily-limit 8 --llm-max-per-run 5` | ANTHROPIC_API_KEY in rendered plist or keyring | LLM-triaged GitHub issues; quota circuit breakers CB-1/2/3 |
+| `obsidian-rollover` | daily 00:40 (or next wake); RunAtLoad must stay **false** | `utils/obsidian_rollover.sh` | `utils/obsidian_daily_rollover.py` | Full Disk Access via bash wrapper (TCC) | daily note rolled over; log in `~/Library/Logs/rebalance-os/` |
+| `obsidian-daily-sync` | daily 18:20 (or next wake); RunAtLoad **false**; a post-midnight catch-up skips itself | `utils/obsidian_daily_sync.sh` | `utils/obsidian_daily_sync.py` — Gemini daily-activity summary from the structured pulse snapshot | rebalance venv + Gemini API key; Full Disk Access via bash wrapper (TCC) | idempotent AI summary block appended to `0. Today's Notes.md`; log in `~/Library/Logs/rebalance-os/` |
+| `git-pulse-daily-synthesis` | daily 18:30 (or next wake); RunAtLoad **false**; a post-midnight catch-up skips itself; **must stay after `obsidian-daily-sync`** | `utils/git_pulse_daily_synthesis.sh` | `utils/git_pulse_daily_synthesis.py` — Gemini synthesis of `view.sh --today` multi-device git activity (GH-114) | rebalance venv + Gemini API key; Full Disk Access via bash wrapper (TCC) for the optional vault write | idempotent Git Pulse summary block appended to `0. Today's Notes.md` (if vault configured) AND/OR upserted into `<pulse_target_path>/CLIO/git-pulse-daily-log.md` (if `git_pulse_clio_enabled`, git-committed+pushed); log in `~/Library/Logs/rebalance-os/` |
 
 All labels are prefixed `com.rebalance-os.`. Experimental/utility agents
 (`com.user.git-pulse`, `com.user.stickies2obsidian`) live in `experimental/`
@@ -29,14 +31,36 @@ scope for this table.
 
 ## Freshness model (intentional, not accidental)
 
-The hourly stagger is deliberate — readers trail writers inside each hour:
+The hourly stagger is deliberate — readers trail writers inside each hour, and
+since GH-175 **no two jobs share a minute**:
 
 ```
-:00 pulse-sync (reads)   :00/:30 pulse-web-sync (reads)
+:00 pulse-sync (reads)
+:07 pulse-warning-watch      :22      :37      :52
+:08 pulse-web-sync (reads)   :38
+:10 health-check
 :15 vault-sync (writes vault + semantic)
+:25 health-check-triage (08/14/20 only)
 :45 github-sync (writes github raw only)
 06:30 daily-sync (writes everything, incl. github → semantic backfill)
+00:40 obsidian-rollover      18:20 obsidian-daily-sync      18:30 git-pulse-daily-synthesis
 ```
+
+- **`obsidian-daily-sync` → `git-pulse-daily-synthesis` is an ORDERING
+  DEPENDENCY, not just a stagger.** When both destinations are configured, the
+  Git Pulse block must land *after* the GH-112 AI Daily Summary block. Both were
+  moved together in GH-175 (18:00→18:20 and 18:05→18:30); moving one without the
+  other inverts the order and puts the Git Pulse block above the AI summary.
+
+- **pulse-web-sync moved off :00 for correctness, not tidiness** (GH-175). It is
+  a derived read-only stage over what `pulse-sync` writes at :00; sharing that
+  minute risked rendering from half-written state. :08 puts it clearly after.
+- **pulse-warning-watch moved off the quarter hours** — on :00/:15/:30/:45 it
+  collided with `pulse-sync`, `vault-sync`, `pulse-web-sync` and `github-sync` in
+  turn. Same 15-minute cadence, no shared minute.
+- This is *same-minute* de-confliction only. It does **not** address run-window
+  overlap: `daily-sync` runs ~25–30 min from 06:30 and still spans `github-sync`
+  at :45. That overlap is handled by GH-131's bounded SQLite retry.
 
 - **vault-sync includes the `semantic` scope intentionally** — vault ingest
   alone only updates raw tables; the semantic backfill+embed is what makes a

@@ -1,0 +1,318 @@
+{
+  "title": "rebalance-OS Architecture",
+  "nodes": [
+    {
+      "id": "user",
+      "label": "User / Host",
+      "type": "external",
+      "description": "User via MCP Host (VS Code, Claude)"
+    },
+    {
+      "id": "mcp_server",
+      "label": "MCP Server",
+      "type": "interface",
+      "description": "Exposes tools (ask, semantic_query, refresh_index)"
+    },
+    {
+      "id": "dashboard",
+      "label": "Dashboard & Web",
+      "type": "interface",
+      "description": "Rich CLI Dashboard & Pulse Web UI"
+    },
+    {
+      "id": "refresh_index",
+      "label": "refresh_index()",
+      "type": "component",
+      "description": "Fan-OUT Orchestrator (index_ops.py)"
+    },
+    {
+      "id": "querier",
+      "label": "Querier (ask)",
+      "type": "component",
+      "description": "Broad mixed-context synthesis orchestrator"
+    },
+    {
+      "id": "semantic_index",
+      "label": "Semantic Index",
+      "type": "component",
+      "description": "Unified raw retrieval primitive"
+    },
+    {
+      "id": "next_actions",
+      "label": "Next Actions",
+      "type": "component",
+      "description": "What to do next engine"
+    },
+    {
+      "id": "qwen3",
+      "label": "Local Qwen3",
+      "type": "external",
+      "description": "Fast first-pass synthesis layer (Local)"
+    },
+    {
+      "id": "github_api",
+      "label": "GitHub API",
+      "type": "external",
+      "description": "GitHub REST Events & Artifacts"
+    },
+    {
+      "id": "vault_api",
+      "label": "Obsidian Vault",
+      "type": "external",
+      "description": "Local Markdown Files"
+    },
+    {
+      "id": "cal_api",
+      "label": "Google Calendar",
+      "type": "external",
+      "description": "Calendar API"
+    },
+    {
+      "id": "sleuth_api",
+      "label": "Sleuth Reminders",
+      "type": "external",
+      "description": "Sleuth Slack Reminders"
+    },
+    {
+      "id": "gmail_api",
+      "label": "Gmail API",
+      "type": "external",
+      "description": "Email Inbox"
+    },
+    {
+      "id": "xyz_hq",
+      "label": "XYZ HQ (planned)",
+      "type": "external",
+      "description": "Cross-repo marathon/session state + per-issue disposition export (staged, not yet active - GH-102 Seam #4, toggle REBALANCE_XYZ_DISPOSITION default-off)"
+    },
+    {
+      "id": "github_collector",
+      "label": "GitHub Collector",
+      "type": "component",
+      "description": "github_scan.py & github_knowledge.py"
+    },
+    {
+      "id": "vault_collector",
+      "label": "Vault Ingester",
+      "type": "component",
+      "description": "note_ingester.py & embedder.py"
+    },
+    {
+      "id": "cal_collector",
+      "label": "Calendar Collector",
+      "type": "component",
+      "description": "calendar.py"
+    },
+    {
+      "id": "sleuth_collector",
+      "label": "Sleuth Collector",
+      "type": "component",
+      "description": "sleuth_reminders.py"
+    },
+    {
+      "id": "gmail_collector",
+      "label": "Gmail Collector",
+      "type": "component",
+      "description": "gmail.py"
+    },
+    {
+      "id": "xyz_disposition_collector",
+      "label": "XYZ Disposition Collector (planned)",
+      "type": "component",
+      "description": "Staged github_items disposition overlay (GH-102 Seam #4) - not registered while REBALANCE_XYZ_DISPOSITION is unset/0"
+    },
+    {
+      "id": "semantic_stage",
+      "label": "Semantic Stage",
+      "type": "component",
+      "description": "Unified Semantic Index Backfill"
+    },
+    {
+      "id": "sqlite",
+      "label": "SQLite Store",
+      "type": "database",
+      "description": "rebalance.db (Fan-IN Persistence Base)"
+    },
+    {
+      "id": "sqlite_vec",
+      "label": "sqlite-vec",
+      "type": "database",
+      "description": "Vector similarity search"
+    }
+  ],
+  "edges": [
+    {
+      "source": "user",
+      "target": "mcp_server",
+      "label": "calls tools"
+    },
+    {
+      "source": "user",
+      "target": "dashboard",
+      "label": "views"
+    },
+    {
+      "source": "mcp_server",
+      "target": "refresh_index",
+      "label": "triggers sync"
+    },
+    {
+      "source": "mcp_server",
+      "target": "querier",
+      "label": "asks"
+    },
+    {
+      "source": "mcp_server",
+      "target": "semantic_index",
+      "label": "queries"
+    },
+    {
+      "source": "dashboard",
+      "target": "next_actions",
+      "label": "reads"
+    },
+    {
+      "source": "dashboard",
+      "target": "sqlite",
+      "label": "polls"
+    },
+    {
+      "source": "refresh_index",
+      "target": "github_collector",
+      "label": "dispatches"
+    },
+    {
+      "source": "refresh_index",
+      "target": "vault_collector",
+      "label": "dispatches"
+    },
+    {
+      "source": "refresh_index",
+      "target": "cal_collector",
+      "label": "dispatches"
+    },
+    {
+      "source": "refresh_index",
+      "target": "sleuth_collector",
+      "label": "dispatches"
+    },
+    {
+      "source": "refresh_index",
+      "target": "gmail_collector",
+      "label": "dispatches"
+    },
+    {
+      "source": "refresh_index",
+      "target": "xyz_disposition_collector",
+      "label": "dispatches (planned)",
+      "kind": "async"
+    },
+    {
+      "source": "refresh_index",
+      "target": "semantic_stage",
+      "label": "dispatches"
+    },
+    {
+      "source": "github_api",
+      "target": "github_collector",
+      "label": "fetch delta"
+    },
+    {
+      "source": "vault_api",
+      "target": "vault_collector",
+      "label": "scan files"
+    },
+    {
+      "source": "cal_api",
+      "target": "cal_collector",
+      "label": "fetch 30d back"
+    },
+    {
+      "source": "sleuth_api",
+      "target": "sleuth_collector",
+      "label": "fetch all"
+    },
+    {
+      "source": "gmail_api",
+      "target": "gmail_collector",
+      "label": "fetch latest 100"
+    },
+    {
+      "source": "xyz_hq",
+      "target": "xyz_disposition_collector",
+      "label": "fetch disposition export (planned)",
+      "kind": "async"
+    },
+    {
+      "source": "github_collector",
+      "target": "sqlite",
+      "label": "upserts"
+    },
+    {
+      "source": "vault_collector",
+      "target": "sqlite",
+      "label": "upserts"
+    },
+    {
+      "source": "cal_collector",
+      "target": "sqlite",
+      "label": "upserts"
+    },
+    {
+      "source": "sleuth_collector",
+      "target": "sqlite",
+      "label": "upserts"
+    },
+    {
+      "source": "gmail_collector",
+      "target": "sqlite",
+      "label": "upserts"
+    },
+    {
+      "source": "xyz_disposition_collector",
+      "target": "sqlite",
+      "label": "would overlay github_items (planned)",
+      "kind": "async"
+    },
+    {
+      "source": "semantic_stage",
+      "target": "sqlite",
+      "label": "projects documents"
+    },
+    {
+      "source": "semantic_stage",
+      "target": "sqlite_vec",
+      "label": "embeds to"
+    },
+    {
+      "source": "querier",
+      "target": "sqlite",
+      "label": "gathers context"
+    },
+    {
+      "source": "querier",
+      "target": "sqlite_vec",
+      "label": "gathers semantic context"
+    },
+    {
+      "source": "querier",
+      "target": "qwen3",
+      "label": "synthesizes via"
+    },
+    {
+      "source": "semantic_index",
+      "target": "sqlite",
+      "label": "reads documents"
+    },
+    {
+      "source": "semantic_index",
+      "target": "sqlite_vec",
+      "label": "ANN search"
+    },
+    {
+      "source": "next_actions",
+      "target": "sqlite",
+      "label": "reads events"
+    }
+  ]
+}

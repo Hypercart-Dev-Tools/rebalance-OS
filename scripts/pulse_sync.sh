@@ -36,6 +36,28 @@ print(f"database={db_path}")
 # live-pulse.md when origin advances between runs.
 push = os.environ.get("PULSE_PUSH", "true").strip().lower() not in ("0", "false", "no", "off")
 print(f"push={push} (PULSE_PUSH={os.environ.get('PULSE_PUSH', 'unset')})")
+
+# Reconcile step (GH-152): fetch origin and rebase the local mirror onto it so
+# the dashboard-read freshness signals don't freeze. Failure is surfaced LOUDLY
+# but is NON-FATAL: reconcile is a freshness optimization, not a prerequisite for
+# publishing, so a diverged/conflicting mirror must not brick the hourly publish.
+from pathlib import Path
+from rebalance.ingest.config import get_pulse_config
+from rebalance.ingest.pulse import reconcile_pulse_mirror, PulseReconcileError
+
+target = get_pulse_config().get("pulse_target_path")
+if not target:
+    print("WARNING: pulse_target_path not configured — skipping mirror reconcile", file=sys.stderr)
+else:
+    target_path = Path(target).expanduser().resolve()
+    print(f"Reconciling pulse mirror at {target_path}...")
+    try:
+        reconcile_pulse_mirror(target_path)
+        print("Reconciliation successful.")
+    except PulseReconcileError as exc:
+        # Loud, non-fatal: publish still proceeds with the mirror as-is.
+        print(f"WARNING: pulse mirror reconcile failed — publishing anyway: {exc}", file=sys.stderr)
+
 result = publish_pulse(db_path, dry_run=False, push=push)
 # Drop the rendered markdown from the log to keep it readable; the file on
 # disk is the artifact.

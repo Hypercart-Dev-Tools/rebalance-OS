@@ -18,10 +18,12 @@ interface — there is no auth and /api/refresh runs a subprocess.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -34,9 +36,16 @@ import uvicorn
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PULSE_HTML = PROJECT_ROOT / "web" / "pulse.html"
 PULSE_WEB_PY = PROJECT_ROOT / "scripts" / "pulse_web.py"
+# Canonical path shared with pulse_web.py — must stay in sync
+ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 PYTHON = sys.executable
 
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
+# _open_bundle_invoker is a private symbol; coupling is intentional and documented here.
+# It is the only public-facing invoker for the signed Apple Reminders helper bundle.
+# Promote to a public name in apple_reminders_write.py when the module API stabilises.
+from rebalance.ingest.apple_reminders_write import _open_bundle_invoker  # noqa: PLC2701
+from rebalance.ingest.config import get_apple_reminders_list_name
 from pulse_web import (  # noqa: E402
     complete_goal_in_file,
     forget_goal_completion,
@@ -45,6 +54,12 @@ from pulse_web import (  # noqa: E402
     resolve_goals_path,
     load_goal_history,
     undo_goal_completion_in_file,
+)
+from rebalance.ingest.apple_reminders_write import (  # noqa: E402
+    AppleRemindersWriteError,
+    WriteOp,
+    apply_reminder_writes,
+    build_request,
 )
 from rebalance.ingest.config import add_figma_file_key, get_figma_file_keys  # noqa: E402
 from rebalance.ingest.index_ops import refresh_index  # noqa: E402
@@ -57,7 +72,11 @@ _FIGMA_KEY_RE = re.compile(r"^[A-Za-z0-9]{8,}$")
 # too, so their links work without a separate `rebalance serve` process on
 # :8787. Reuses the renderers in rebalance.web (no duplication).
 from rebalance.web import (  # noqa: E402
+    Focus5GoalCompleteRequest,
     Focus5HideRequest,
+    focus5_complete_goal as _focus5_complete_goal,
+    focus5_goals as _focus5_goals,
+    focus5_json as _focus5_json,
     auth_log_page as _auth_log_page,
     auth_log_raw as _auth_log_raw,
     focus5_note as _focus5_note,
@@ -66,6 +85,7 @@ from rebalance.web import (  # noqa: E402
     sleuth_graph_page as _sleuth_graph_page,
     unhandled_exception_handler as _unhandled_exception_handler,
     whatsnext_page as _whatsnext_page,
+    settings_page as _settings_page,
 )
 
 # Show the real traceback in-browser on an unhandled error instead of a bare
@@ -101,6 +121,65 @@ def focus5_note():
     return _focus5_note()
 
 
+@app.get("/focus-5.json")
+def focus5_json(view: str = "focus5"):
+    # The native/desktop roster fetch. Mirror it on this always-running server so
+    # Focus 5 Float loads a live roster without a separate `rebalance serve` on
+    # :8787 (shared renderer in rebalance.web — keeps both surfaces identical).
+    return _focus5_json(view=view)
+
+
+@app.get("/focus-5/goals")
+def focus5_goals():
+    return _focus5_goals()
+
+
+@app.post("/api/focus5/goals/complete")
+def focus5_complete_goal(req: Focus5GoalCompleteRequest, request: Request):
+    return _focus5_complete_goal(req, request)
+
+
+class AppleReminderCompleteRequest(BaseModel):
+    reminder_id: str
+    title: str | None = None  # carried for the audit trail / readability only
+
+
+@app.post("/api/apple-reminders/complete")
+def apple_reminders_complete(req: AppleReminderCompleteRequest):
+    """Complete one Apple Reminder from the dashboard column (Phase 6 dashboard
+    write-back; APPLE-REMINDERS-UNIFIED-PLAN.md).
+
+    The ONLY web-surface Apple Reminders write, and it routes through the Phase
+    5.1 orchestrator (`apply_reminder_writes`) so the single-writer + audit-table
+    discipline is preserved — this layer holds no EventKit/SQLite write code of
+    its own. `reconcile=False`: the local `apple_reminders` table re-syncs on the
+    next scoped sync (FDA-gated; this loopback server can't hold that grant), so
+    the UI greys the row optimistically. A non-2xx here makes the row revert
+    rather than falsely show "done".
+    """
+    reminder_id = (req.reminder_id or "").strip()
+    if not reminder_id:
+        raise HTTPException(status_code=400, detail="reminder_id is required")
+
+    request = build_request(
+        [WriteOp(op="complete", reminder_id=reminder_id)], mode="apply"
+    )
+    try:
+        result = apply_reminder_writes(
+            resolve_database_path(), request, reconcile=False
+        )
+    except AppleRemindersWriteError as exc:
+        # Helper missing/unauthorized, scope/confirmation failure, IPC error, …
+        raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
+
+    payload = result.as_dict()
+    if not result.ok:
+        # A per-op error (auth denied, helper rejected) — surface it so the row
+        # never falsely shows complete.
+        return JSONResponse(payload, status_code=502)
+    return payload
+
+
 @app.post("/api/focus5/hide")
 def focus5_hide(req: Focus5HideRequest):
     # The ✕ on a Focus 5 card: hide the repo and re-rank from cache (shared logic
@@ -121,6 +200,11 @@ def whats_next(refresh: bool = False):
 @app.get("/sleuth-graph")
 def sleuth_graph():
     return _sleuth_graph_page()
+
+
+@app.get("/settings")
+def settings():
+    return _settings_page()
 
 
 class ChatRequest(BaseModel):
@@ -225,11 +309,6 @@ def health():
 
 @app.post("/api/refresh")
 def refresh():
-    import uuid
-    import json
-    from rebalance.ingest.apple_reminders_write import _open_bundle_invoker
-    from rebalance.ingest.config import get_apple_reminders_list_name
-
     started = time.perf_counter()
 
     helper_error = None
@@ -252,11 +331,14 @@ def refresh():
             first_res = results[0]
             if first_res.get("status") == "ok":
                 active_items = json.loads(first_res.get("detail", "[]"))
-                active_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
-                active_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp_path = active_path.with_suffix(".tmp")
-                tmp_path.write_text(json.dumps(active_items), encoding="utf-8")
-                tmp_path.replace(active_path)
+                ACTIVE_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = ACTIVE_JSON_PATH.with_suffix(".tmp")
+                # Versioned envelope so pulse_web.py can detect schema changes.
+                tmp_path.write_text(
+                    json.dumps({"schema_version": 1, "items": active_items}),
+                    encoding="utf-8",
+                )
+                tmp_path.replace(ACTIVE_JSON_PATH)
             else:
                 helper_error = str(first_res.get("detail", "helper returned error"))
     except Exception as exc:
@@ -276,8 +358,10 @@ def refresh():
             status_code=500,
         )
     mtime = datetime.fromtimestamp(PULSE_HTML.stat().st_mtime, tz=timezone.utc)
+    # ok is False when the helper failed even though the render succeeded —
+    # the dashboard must surface this, not silently show stale data.
     return {
-        "ok": True,
+        "ok": helper_error is None,
         "duration_ms": duration_ms,
         "generated_at": mtime.isoformat(),
         "helper_error": helper_error,

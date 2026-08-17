@@ -36,7 +36,7 @@ def _data(ranked, **over) -> dict:
     d = dict(
         ranked=ranked,
         synthesis="",
-        model_used="gemini-2.0-flash",
+        model_used="gemini-3.5-flash",
         blended=True,
         weights_used={},
         note="",
@@ -81,7 +81,7 @@ class WhatsNextBodyTests(unittest.TestCase):
         body = _whatsnext_body(_data([_action()]))
         self.assertIn("last computed", body)
         self.assertIn("team-blended", body)
-        self.assertIn("gemini-2.0-flash", body)
+        self.assertIn("gemini-3.5-flash", body)
         self.assertIn("/whats-next?refresh=1", body)  # refresh control
 
     def test_operator_only_indicator(self) -> None:

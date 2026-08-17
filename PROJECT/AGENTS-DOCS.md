@@ -83,6 +83,10 @@ If a doc is a phased project plan, it should usually contain:
 
 The rule is not "add boilerplate everywhere." The rule is "make progress, next step, and gate criteria obvious."
 
+A phase should also name two more steps explicitly: a `Discuss` note before planning (decisions made
+and why) and a `Verification summary` before phase close (what was actually run and its result, unmet
+items stated not dropped). See `PROJECT/PDDA.md` → "Named phase-loop steps" for the full contract.
+
 ## Bug-fix doc contract
 
 Bug-fix docs can use a lighter structure than full project plans, but they still need the same frontmatter

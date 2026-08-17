@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-156-critical-clio-projection-reconciliation .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact utils/CLIO/INSTALL.md,utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh \
+  --pre-advance-cmd 'if [ -x test/clio-exporter.sh ]; then bash test/clio-exporter.sh; else awk "/prompt-log-to-md.sh << .EOF.$/{f=1;next} f&&/^EOF$/{exit} f" utils/CLIO/INSTALL.md > "${TMPDIR:-/tmp}/clio-gate.sh" && bash -n "${TMPDIR:-/tmp}/clio-gate.sh"; fi' \
+  --require-clean

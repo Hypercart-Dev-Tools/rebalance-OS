@@ -1,0 +1,24 @@
+# 3-Eyes adoption of the incumbent pulse warning watcher (GH-195 P8 Wave 2).
+# This probes com.rebalance-os.pulse-server at 127.0.0.1:8767. The server remains
+# independently managed (KeepAlive); a failed early probe is a normal job failure,
+# not an ordering guarantee that the registry can express.
+
+id = "pulse-warning-watch"
+command = "pulse-warning-watch"
+description = "Check the local pulse health banner every 15 minutes at :07, :22, :37, and :52."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.pulse-warning-watch"]
+
+[schedule.launchd]
+StartCalendarInterval = [
+  { Minute = 7 },
+  { Minute = 22 },
+  { Minute = 37 },
+  { Minute = 52 },
+]
+
+[breakers]
+single_instance = true
+max_rss_gb = 8
+trip_after_failures = 3

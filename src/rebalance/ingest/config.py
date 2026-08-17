@@ -205,15 +205,24 @@ def _resolved_config_path() -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    cwd_root = find_project_root(Path.cwd())
-    if cwd_root is not None:
-        return cwd_root / "temp" / "rbos.config"
+    try:
+        cwd = Path.cwd()
+    except (PermissionError, OSError):
+        cwd = None
+
+    if cwd is not None:
+        cwd_root = find_project_root(cwd)
+        if cwd_root is not None:
+            return cwd_root / "temp" / "rbos.config"
 
     module_root = find_project_root(Path(__file__).resolve())
     if module_root is not None:
         return module_root / "temp" / "rbos.config"
 
-    return Path.cwd() / "temp" / "rbos.config"
+    if cwd is not None:
+        return cwd / "temp" / "rbos.config"
+
+    return Path(__file__).resolve().parent.parent.parent.parent / "temp" / "rbos.config"
 
 
 def _ensure_config_dir() -> None:
@@ -538,6 +547,24 @@ def set_gmail_query_filter(query: str) -> None:
     config = _read_config()
     config["gmail_query_filter"] = query.strip()
     _write_config(config)
+
+
+def describe_gmail_query_filter() -> str:
+    """Return the active Gmail filter as an operator-facing phrase.
+
+    Single formatter for every health surface that needs to explain *why* the
+    email collector is quiet. GH-145: ``doctor``'s freshness check and the CLI's
+    ``signal health`` line each used to reach their own conclusion about a
+    zero-row window, and disagreed in the same output — one said ``ok``, the
+    other ``degraded``. The underlying fact (the configured filter) has exactly
+    one home, and this is how both surfaces read it.
+
+    Kept here rather than in ``doctor`` so nothing has to import a health module
+    to describe a config value.
+    """
+    from rebalance.ingest.gmail import DEFAULT_QUERY_FILTER  # noqa: PLC0415 — avoids a cycle
+
+    return f"Gmail filter: {get_gmail_query_filter() or DEFAULT_QUERY_FILTER}"
 
 
 # ---------------------------------------------------------------------------
@@ -938,6 +965,25 @@ def is_github_repo_ignored(repo: str) -> bool:
     return normalized in set(get_github_ignored_repos())
 
 
+def get_auto_promote_config() -> dict[str, Any]:
+    """Return the auto-promotion config block (GH-124).
+
+    Keys:
+      - auto_promote_enabled: opt-in flag gating commit-threshold auto-promotion of a
+        watched repo into project_registry as a machine_owned row (generated_by
+        "commit_threshold_v1"). github_ignored_repos always wins regardless of this
+        flag. Default: True.
+      - auto_promote_commit_threshold: minimum distinct-SHA operator commits (all-time,
+        cumulative — not a rolling window) before a watched repo auto-promotes.
+        Default: 3.
+    """
+    config = _read_config()
+    return {
+        "auto_promote_enabled": bool(config.get("auto_promote_enabled", True)),
+        "auto_promote_commit_threshold": int(config.get("auto_promote_commit_threshold", 3)),
+    }
+
+
 def get_calendar_ignored_summaries() -> list[str]:
     """Return operator-local calendar event summaries to suppress.
 
@@ -1190,6 +1236,14 @@ def get_pulse_config() -> dict[str, Any]:
       - sleuth_ignored_workspaces: list of Slack workspace_name values to
         suppress from pulse Sleuth surfacing (e.g. ["neochrome-dev"] hides
         test-bot reminders so only Sleuth AI v2 in `neochrome` appears).
+      - git_pulse_clio_enabled: opt-in flag for the GH-114 git-pulse daily
+        synthesis to ALSO (not instead of) upsert into a growing log file
+        inside pulse_target_path, independent of whether the Obsidian vault
+        is configured. Default: False. See utils/git_pulse_daily_synthesis.py.
+      - git_pulse_clio_subdir: subfolder within pulse_target_path for that
+        log file (default: "CLIO").
+      - git_pulse_clio_filename: filename of that log file within the
+        subdir (default: "git-pulse-daily-log.md").
     """
     config = _read_config()
     return {
@@ -1199,12 +1253,34 @@ def get_pulse_config() -> dict[str, Any]:
         "pulse_filename": config.get("pulse_filename", "live-pulse.md"),
         "pulse_timezone": config.get("pulse_timezone"),
         "sleuth_ignored_workspaces": config.get("sleuth_ignored_workspaces") or [],
+        "git_pulse_clio_enabled": bool(config.get("git_pulse_clio_enabled", False)),
+        "git_pulse_clio_subdir": config.get("git_pulse_clio_subdir", "CLIO"),
+        "git_pulse_clio_filename": config.get("git_pulse_clio_filename", "git-pulse-daily-log.md"),
+    }
+
+
+def get_claude_cloud_config() -> dict[str, Any]:
+    """Return the Claude Code Cloud signal config block (GH-128).
+
+    Keys:
+      - claude_cloud_signal_enabled: opt-in flag gating whether the cloud-jobs
+        signal contributes candidates to the HiQS ranked verdict. Default False —
+        the provider ships DORMANT so the signal can be watched via the Obsidian
+        daily-note quality grade before it is promoted to influence ranking.
+        See src/rebalance/ingest/claude_cloud.py.
+    """
+    config = _read_config()
+    return {
+        "claude_cloud_signal_enabled": bool(config.get("claude_cloud_signal_enabled", False)),
     }
 
 
 def set_pulse_config(**values: Any) -> None:
     """Update one or more pulse config keys. Pass None to leave a key unchanged."""
-    allowed = {"github_login", "slack_user_id", "pulse_target_path", "pulse_filename", "pulse_timezone"}
+    allowed = {
+        "github_login", "slack_user_id", "pulse_target_path", "pulse_filename", "pulse_timezone",
+        "git_pulse_clio_enabled", "git_pulse_clio_subdir", "git_pulse_clio_filename",
+    }
     config = _read_config()
     for key, value in values.items():
         if key not in allowed:
@@ -1338,9 +1414,7 @@ def set_sync_subdir(subdir: str) -> None:
 # LLM API keys
 # ---------------------------------------------------------------------------
 
-def get_anthropic_api_key() -> str | None:
-    """Return the Anthropic API key from the environment, or None if absent."""
-    return os.environ.get("ANTHROPIC_API_KEY")
+
 
 
 def get_gemini_api_key() -> str | None:
@@ -1352,7 +1426,14 @@ def get_gemini_api_key() -> str | None:
          GEMINI_SECRET_NAME, default "gemini-api-key").
       2. GEMINI_API_KEY environment variable.
       3. GOOGLE_API_KEY environment variable.
-      4. Google Secret Manager via the ``gcloud secrets versions access`` CLI —
+      4. Key FILE — the paid-key path. The file location resolves from
+         GEMINI_API_KEY_FILE env → ``gemini_key_file`` config → the default
+         ``~/secrets/gemini-paid-key.txt``. The file lives OUTSIDE the repo by
+         design (never committed), so an absolute/expanded path is read. This is
+         what makes a keyless machine (no GOOGLE_CLOUD_PROJECT, no env var, no
+         gcloud auth) resolve Gemini instead of silently falling back to local
+         Qwen — the common single-operator setup. Read in-memory; never logged.
+      5. Google Secret Manager via the ``gcloud secrets versions access`` CLI —
          the pattern the P2 design specifies (P2 decision #5). This last-resort
          path means a machine that can reach the secret through gcloud but lacks
          the optional Python package/env still resolves the key instead of
@@ -1380,8 +1461,79 @@ def get_gemini_api_key() -> str | None:
     if env_key:
         return env_key
 
-    # 4. gcloud CLI fallback (the documented P2 pattern) — last resort.
+    # 4. Key file (the paid-key path). Resolves a keyless single-operator setup.
+    file_key = _gemini_key_from_file()
+    if file_key:
+        return file_key
+
+    # 5. gcloud CLI fallback (the documented P2 pattern) — last resort.
     return _gemini_key_via_gcloud(project, secret_name)
+
+
+# The default key-file location. Outside the repo by design so it is never
+# committed; overridable via GEMINI_API_KEY_FILE env or the ``gemini_key_file``
+# config key.
+DEFAULT_GEMINI_KEY_FILE = "~/secrets/gemini-paid-key.txt"
+
+
+def _gemini_key_from_file() -> str | None:
+    """Return the Gemini API key read from a key file, or None.
+
+    The PATH is resolved first-hit-wins from:
+      1. ``GEMINI_API_KEY_FILE`` environment variable,
+      2. the ``gemini_key_file`` value in the rbos pulse config,
+      3. the default ``~/secrets/gemini-paid-key.txt``.
+
+    The key file holds the raw key as text (leading/trailing whitespace and
+    blank lines ignored). Returns None when no candidate resolves to a readable,
+    non-empty file. NEVER raises and NEVER logs the key value.
+    """
+    candidates: list[str] = []
+    env_path = os.environ.get("GEMINI_API_KEY_FILE")
+    if env_path:
+        candidates.append(env_path)
+    try:
+        cfg_path = get_pulse_config().get("gemini_key_file")
+    except Exception:  # noqa: BLE001 — config unreadable; skip to the default
+        cfg_path = None
+    if cfg_path:
+        candidates.append(str(cfg_path))
+    candidates.append(DEFAULT_GEMINI_KEY_FILE)
+
+    for raw in candidates:
+        try:
+            path = Path(raw).expanduser()
+            if not path.is_file():
+                continue
+            value = _pick_api_key(path.read_text(encoding="utf-8"))
+            if value:
+                return value
+        except Exception:  # noqa: BLE001 — unreadable / perms; try the next candidate
+            continue
+    return None
+
+
+# A Google API key: literal "AIza" + 35 url-safe chars.
+_GOOGLE_API_KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{35}")
+
+
+def _pick_api_key(text: str) -> str | None:
+    """Extract the API key from key-file *text*.
+
+    A key file may hold the bare key, OR several lines — e.g. a project/client id
+    on one line and the ``AIza…`` key on another (the shape Google's console
+    "download" produces). Prefer a substring matching the Google API-key shape;
+    otherwise fall back to the first non-empty line so a plain single-line key
+    file (any future key format) still resolves.
+    """
+    match = _GOOGLE_API_KEY_RE.search(text or "")
+    if match:
+        return match.group(0)
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
 
 
 def _gemini_key_via_gcloud(project: str | None, secret_name: str) -> str | None:
@@ -1428,6 +1580,19 @@ def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
     return out if all(out.values()) else None
 
 
+def _derive_git_repo_root(path_str: str) -> str | None:
+    """Walk up from *path_str* looking for the nearest ``.git`` — the local
+    working-tree root, if *path_str* is a local file path inside a git clone.
+    Returns None for URLs (http/https) or paths with no enclosing git repo."""
+    if path_str.startswith(("http://", "https://")):
+        return None
+    candidate = Path(path_str).expanduser()
+    for parent in (candidate, *candidate.parents):
+        if (parent / ".git").exists():
+            return str(parent)
+    return None
+
+
 def set_sleuth_credentials(
     base_url: str, token: str, workspace: str, *, source: str = "manual"
 ) -> None:
@@ -1439,6 +1604,11 @@ def set_sleuth_credentials(
     unattended and cannot reach the keychain). Phase 2: creds are **no longer
     written to rbos.config**. Logs a `token_set` auth-log event + sidecar
     first-added metadata.
+
+    If ``base_url`` is a local file path (the file-source method — see
+    UPGRADE.md), auto-derives the enclosing git working tree and records it as
+    ``sleuth_sync_repo_path`` (plain, non-secret) so doctor's "stale export"
+    remediation can name the real clone instead of assuming a default path.
     """
     import json as _json
 
@@ -1456,6 +1626,9 @@ def set_sleuth_credentials(
         store_ok = False
     if not (keyring_ok or store_ok):
         raise RuntimeError("could not persist Sleuth credentials to keyring or secret store")
+    repo_root = _derive_git_repo_root(creds["SLEUTH_WEB_API_BASE_URL"])
+    if repo_root:
+        set_sleuth_sync_repo_path(repo_root)
     try:  # never let logging break a credential write
         from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
         auth_log.log_sleuth_credentials_set(source=source, workspace=creds["SLEUTH_WORKSPACE_NAME"])
@@ -1464,6 +1637,27 @@ def set_sleuth_credentials(
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+def get_sleuth_sync_repo_path() -> str:
+    """Return the configured local clone of the Sleuth/git-pulse sync repo, or
+    '' if unset. This is the ``~/git-pulse-sync`` checkout UPGRADE.md has
+    operators create for the file-source sync method — a separate clone from
+    ``pulse_target_path`` (the push target for ``publish_pulse()``). Doctor's
+    "stale Sleuth export" remediation reads this instead of assuming a fixed
+    default path. Auto-populated by ``set_sleuth_credentials()`` when
+    ``base_url`` is a local path inside a git working tree; can also be set
+    directly via ``set_sleuth_sync_repo_path()`` or in temp/rbos.config under
+    ``sleuth_sync_repo_path``.
+    """
+    return str(_read_config().get("sleuth_sync_repo_path", ""))
+
+
+def set_sleuth_sync_repo_path(path: str) -> None:
+    """Store the local clone path of the Sleuth/git-pulse sync repo in rbos.config."""
+    config = _read_config()
+    config["sleuth_sync_repo_path"] = path
+    _write_config(config)
 
 
 def clear_sleuth_credentials() -> None:

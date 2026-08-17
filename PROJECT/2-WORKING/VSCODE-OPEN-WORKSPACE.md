@@ -108,7 +108,7 @@ Touch points (already located):
       click still opens the repo via the `vscode://` fallback.
 - [x] Self-check on the pure logic (binary resolution + argv assembly) —
       `FOCUS5_VSCODETEST=1 swift run Focus5Float` asserts the candidate order +
-      argv shape (`["<folder>"]`, no `-n`/`-r`), fails on regression. **Run: `VSCODETEST OK — argv=["/tmp/demo repo"] candidates=3`.** → [SelfTest.swift](macOS/Apps/Focus5Float/Sources/Focus5Float/SelfTest.swift)
+      argv shape (`["<folder>"]`, no `-n`/`-r`), fails on regression. **Run: `VSCODETEST OK — argv=["/repos/demo repo"] candidates=3`.** → [SelfTest.swift](macOS/Apps/Focus5Float/Sources/Focus5Float/SelfTest.swift)
 - [x] Diagnosable: launch log line present (`os.Logger` category `vscode`);
       one-shot launch, **no retry loop**.
 - [x] Blast: undo = revert `VSCodeLauncher.swift` + 2 one-line call-site edits (Easy).

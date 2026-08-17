@@ -91,8 +91,11 @@ POLICY = {
         "doc_tokens": ["hourly at :00", "publish_pulse(db_path"],
     },
     "pulse-web-sync": {
+        # :08/:38, not :00/:30 (GH-175). This is a derived read-only stage over
+        # what pulse-sync writes at :00 — sharing that minute risked rendering
+        # from half-written state, so the offset is correctness, not tidiness.
         "calendar": [
-            {"Hour": h, "Minute": m} for h in WORKDAY_HOURS for m in (0, 30)
+            {"Hour": h, "Minute": m} for h in WORKDAY_HOURS for m in (8, 38)
         ],
         "run_at_load": False,
         "keep_alive": False,
@@ -115,7 +118,9 @@ POLICY = {
         "doc_tokens": ["RunAtLoad + KeepAlive", "pulse_server.py"],
     },
     "pulse-warning-watch": {
-        "calendar": [{"Minute": m} for m in (0, 15, 30, 45)],
+        # Off the quarter hours (GH-175): on :00/:15/:30/:45 this collided with
+        # pulse-sync, vault-sync, pulse-web-sync and github-sync in turn.
+        "calendar": [{"Minute": m} for m in (7, 22, 37, 52)],
         "run_at_load": True,
         "keep_alive": False,
         "wrapper": None,
@@ -127,7 +132,8 @@ POLICY = {
         "doc_tokens": ["every 15 min", "pulse_warning_watch.py"],
     },
     "health-check": {
-        "calendar": [{"Minute": 0}],
+        # :10, not :00 (GH-175) — pulse-sync owns :00.
+        "calendar": [{"Minute": 10}],
         "run_at_load": False,
         "keep_alive": False,
         "wrapper": None,
@@ -135,13 +141,14 @@ POLICY = {
         # The hourly run is the cheap FAIL-only tier — LLM flags live only in
         # the 3x-daily triage job.
         "args_must_not_contain": ["--llm-triage"],
-        "doc_tokens": ["hourly at :00", "--close"],
+        "doc_tokens": ["hourly at :10", "--close"],
     },
     "health-check-triage": {
+        # :25, not :00 (GH-175) — pulse-sync owns :00.
         "calendar": [
-            {"Hour": 8, "Minute": 0},
-            {"Hour": 14, "Minute": 0},
-            {"Hour": 20, "Minute": 0},
+            {"Hour": 8, "Minute": 25},
+            {"Hour": 14, "Minute": 25},
+            {"Hour": 20, "Minute": 25},
         ],
         "run_at_load": False,
         "keep_alive": False,
@@ -151,16 +158,42 @@ POLICY = {
             "--llm-triage",
             "--llm-daily-limit",
         ],
-        "doc_tokens": ["08:00, 14:00, 20:00", "--llm-triage"],
+        "doc_tokens": ["08:25, 14:25, 20:25", "--llm-triage"],
     },
     "obsidian-rollover": {
-        "calendar": [{"Hour": 0, "Minute": 0}],
+        # 00:40, not 00:00 (GH-175) — midnight collided with hourly pulse-sync.
+        "calendar": [{"Hour": 0, "Minute": 40}],
         # Loading must never fire the rollover — it would wipe Today's Notes.
         "run_at_load": False,
         "keep_alive": False,
         "wrapper": "utils/obsidian_rollover.sh",
         "wrapper_must_contain": ["obsidian_daily_rollover.py"],
-        "doc_tokens": ["daily 00:00", "obsidian_rollover.sh"],
+        "doc_tokens": ["daily 00:40", "obsidian_rollover.sh"],
+    },
+    "obsidian-daily-sync": {
+        # 18:20, not 18:00 (GH-175) — 18:00 collided with hourly pulse-sync.
+        # MUST stay before git-pulse-daily-synthesis; see its note below.
+        "calendar": [{"Hour": 18, "Minute": 20}],
+        # Loading should not fire an off-schedule summary write.
+        "run_at_load": False,
+        "keep_alive": False,
+        "wrapper": "utils/obsidian_daily_sync.sh",
+        "wrapper_must_contain": ["obsidian_daily_sync.py"],
+        "doc_tokens": ["daily 18:20", "obsidian_daily_sync.sh"],
+    },
+    "git-pulse-daily-synthesis": {
+        # 10 minutes after obsidian-daily-sync (18:20) so, when both destinations
+        # are configured, this block lands after the GH-112 AI Daily Summary block.
+        # ORDERING DEPENDENCY: this must fire AFTER obsidian-daily-sync. Moved
+        # 18:05 -> 18:30 with it in GH-175; changing either without the other
+        # inverts the order and the Git Pulse block lands above the AI summary.
+        "calendar": [{"Hour": 18, "Minute": 30}],
+        # Loading should not fire an off-schedule summary write.
+        "run_at_load": False,
+        "keep_alive": False,
+        "wrapper": "utils/git_pulse_daily_synthesis.sh",
+        "wrapper_must_contain": ["git_pulse_daily_synthesis.py"],
+        "doc_tokens": ["daily 18:30", "git_pulse_daily_synthesis.sh"],
     },
 }
 
@@ -175,6 +208,8 @@ INSTALLERS = {
     "health-check": "install_health_check_scheduler.sh",
     "health-check-triage": "install_health_check_triage_scheduler.sh",
     "obsidian-rollover": "install_obsidian_rollover_scheduler.sh",
+    "obsidian-daily-sync": "install_obsidian_daily_sync_scheduler.sh",
+    "git-pulse-daily-synthesis": "install_git_pulse_daily_synthesis_scheduler.sh",
 }
 
 
@@ -383,6 +418,31 @@ class TestInstallers(unittest.TestCase):
                 "if launchctl list", text,
                 f"{job}: racy grep-conditional unload; install_common always unloads",
             )
+
+
+    def test_installers_are_executable_in_git(self):
+        """Every installer must be mode 100755 in the index, not just on disk.
+
+        Four of these shipped as 100644, so the documented
+        ``./scripts/install_*.sh`` invocation died with "permission denied" on
+        every fresh clone — a hard stop for anyone following UPGRADE.md. A local
+        ``chmod`` does not fix it for other people; the mode has to be in git,
+        which is what this asserts.
+        """
+        out = subprocess.run(
+            ["git", "ls-files", "-s", "--", "scripts/install_*.sh"],
+            cwd=REPO, capture_output=True, text=True, check=True,
+        ).stdout.strip().splitlines()
+        self.assertTrue(out, "no installers found in the git index")
+
+        not_exec = [
+            line.split("\t")[-1] for line in out if not line.startswith("100755")
+        ]
+        self.assertEqual(
+            not_exec, [],
+            "installer(s) not executable in git — `git update-index --chmod=+x` "
+            f"is required for: {not_exec}",
+        )
 
 
 class TestSchedulerDoc(unittest.TestCase):

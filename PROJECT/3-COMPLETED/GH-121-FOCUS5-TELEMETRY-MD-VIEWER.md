@@ -1,0 +1,125 @@
+---
+title: "Focus5Float telemetry viewer: support .md (text viewer) alongside JSON (structured viewer)"
+owner: noel@neochro.me
+gh_issue: 121
+source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/121"
+status: "Completed 2026-07-16 — Phase 1 (base viewer + size ceiling) and Phase 2 (kind label + self-test) both shipped and merged to development (PRs #133, #134)."
+created: 2026-07-06
+updated: 2026-07-16
+doc_type: project
+goal: >
+  Let the Focus5Float telemetry tab open Markdown (.md) files in addition to structured JSON: when the
+  selected file is .json render the existing structured TelemetryEntry viewer, and when it is .md render
+  a read-only text/markdown viewer — chosen by file extension, with unreadable/unsupported files falling
+  through to the existing visible error state.
+non_goals: >
+  No change to the JSON structured viewer's schema or the ~/Documents/telemetry/*.json folder auto-load.
+  Read-only — no markdown editing. No new file types beyond .json and .md. No server/Python surface.
+related:
+  - PROJECT/2-WORKING/P2-FOCUS5-TELEMETRY-TAB.md
+  - PROJECT/2-WORKING/FOCUS5-RESOLUTION-CHANGE-RESILIENCE.md
+effort: 2
+complexity: 2
+risk: 2
+phases: 2
+---
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| **Base .md viewer shipped 2026-07-15** outside the marathon process (picker accepts `.md`, safe `UTType`, symmetric state clear, markdown rendering reused from the `focus5.md` note path — later also gained a GFM table renderer). **Size-ceiling finding closed 2026-07-16** via [MARATHON-2026-07-16 Lane B](MARATHON-2026-07-16.md) (PR #133). **Phase 2 closed 2026-07-16** via [MARATHON-2026-07-16-B Lane B](../2-WORKING/MARATHON-2026-07-16-B.md) (PR #134): header/status now names the file kind, self-test discriminator added, large-file safety confirmed already covered by the 1MB ceiling. | **Done.** Both phases shipped and merged to `development`. |
+
+---
+
+## Table of contents
+
+- [Thesis](#thesis)
+- [Current shape (grounded)](#current-shape-grounded)
+- [Phase 1 — Load + render .md as text, .json as structured](#phase-1--load--render-md-as-text-json-as-structured)
+- [Phase 2 — Polish + self-test](#phase-2--polish--self-test)
+- [Anti-goals](#anti-goals)
+
+---
+
+## Thesis
+
+The telemetry tab is already a "pick a file, view it" surface — it just assumes the file is JSON. The
+change is a **discriminator on file extension**: `.json` keeps the structured `TelemetryEntry` viewer;
+`.md` reads the raw text and shows it in a scrollable read-only viewer (reusing the markdown rendering
+the bottom-note already uses). Small, additive, reversible — no new tab, no schema change.
+
+## Current shape (grounded)
+
+- **Picker:** `openFilePicker()` sets `panel.allowedContentTypes = [UTType.json]` and title "Select
+  Telemetry JSON File" ([Focus5Model.swift:141](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L141)).
+- **Load:** `telemetryFileURL.didSet` → `refreshTelemetry()`, which reads `Data(contentsOf:)` and
+  `JSONDecoder().decode([TelemetryEntry].self)`, setting `telemetryEntries` or `telemetryLoadError`.
+- **Render:** `telemetryContent` shows a no-file state, an error state, an empty state, or the
+  `TelemetryRowView` list ([ContentView.swift:265](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L265)).
+- **Existing markdown:** `noteContent` (the vault `focus5.md`) is already rendered in-app — the .md
+  viewer should reuse that renderer, not invent a second one.
+
+---
+
+## Phase 1 — Load + render .md as text, .json as structured
+
+**Scope:** the smallest change that makes .md selectable and viewable without disturbing JSON.
+
+**Observable checklist:**
+
+- [x] **Picker accepts .md.** `openFilePicker()` `allowedContentTypes` = `[.json, UTType(filenameExtension: "md") ?? .plainText]` — **no force-unwrap**. Title generalized to "Select Telemetry or Markdown File". _(agy [Should] #1, 2026-07-06 — shipped 2026-07-15.)_
+- [x] **A file-kind discriminator.** `telemetryIsMarkdown: Bool` computed property on `Focus5Model`, single source of truth used by both load and render. _(Shipped 2026-07-15.)_
+- [x] **Branch the load, clearing the *other* mode's state both ways.** `refreshTelemetry()`: `.json` decode sets `telemetryMarkdownContent = nil`; `.md` read sets `telemetryEntries = []`. Symmetric clearing confirmed. _(agy [Should] #3, 2026-07-06 — shipped 2026-07-15.)_
+- [x] **Size ceiling on the `.md` read.** `refreshTelemetry()`'s `.md` branch now caps the read at `Focus5Model.telemetryMarkdownByteCeiling` (1MB): reads raw `Data`, and above the ceiling truncates the **bytes** first (`data.prefix(ceiling)`) then lossy-decodes with `String(decoding:as: UTF8.self)` (never fails — a boundary-split multi-byte character becomes one U+FFFD instead of corrupting output), appending a visible `"…truncated (file exceeds 1 MB)"` note. Files under the ceiling are byte-identical to before. _(agy [Should] #2, 2026-07-06 — closed 2026-07-16 via MARATHON-2026-07-16 Lane B.)_
+- [x] **Branch the render.** `telemetryContent` shows a scrollable read-only markdown viewer (reusing the shared `MarkdownBody`/note renderer, later extended with GFM table support) for `.md`; the existing structured list for `.json`. No-file / error states shared. _(Shipped 2026-07-15.)_
+- [x] **Unreadable file → existing error state**, not a crash (parity with the JSON error path) — confirmed by `testMissingFileReportsLoadErrorForBothKinds`.
+
+### Phase 1 — QA gate
+
+- [x] `swift build` green (release) — confirmed 2026-07-16 (`make-app.sh`).
+- [x] **Litmus (both paths):** covered by `TelemetryFileLoadingTests` (`testJSONFileDecodesIntoTelemetryEntries`, `testMarkdownFileLoadsAsRawTextNotTelemetryEntries`) plus a live `make-app.sh` reinstall.
+- [x] **Error parity:** `testMalformedJSONReportsLoadError` + `testMissingFileReportsLoadErrorForBothKinds`, both kinds land in the visible error state, no crash.
+- [x] **Persistence:** `testSelectionPersistsAcrossModelRelaunchForBothKinds` — the selected file (either kind) persists across relaunch via `telemetryFilePath` UserDefaults.
+- [x] `rebalance doctor` clean (no repo-level regression from the build).
+
+### Phase 1 — anti-goals
+
+- Not adding a third tab or a new folder scan — same telemetry tab, same picker.
+- Not changing the `TelemetryEntry` schema or `~/Documents/telemetry/*.json` auto-load behavior.
+
+---
+
+## Phase 2 — Polish + self-test
+
+**Scope:** hardening once the two-path viewer is proven.
+
+**Observable checklist:**
+
+- [x] **Header/status reflects kind.** `telemetryStatus` now shows `"<filename> · markdown"` for `.md` files and `"<filename> · signals · N"` for JSON, gated so it doesn't show a stale count during a load error.
+- [x] **Large-file safety.** Confirmed (not re-engineered) that `Focus5Model.telemetryMarkdownByteCeiling` (1MB) is the actual end-to-end safety mechanism — the string handed to `ScrollView`/`MarkdownBody` is already bounded before the view ever sees it. Documented via a code comment at the `.md` render branch.
+- [x] **Self-test.** `Focus5Model.isMarkdownKind(_:)` extracted as a pure `nonisolated static` function; `SelfTest.swift` gained a `FOCUS5_KINDTEST=1` block asserting `foo.json`→structured, `foo.md`→text, case-insensitivity, `.markdown`≠`.md`, no-extension, and `nil` cases. A matching XCTest was also added to `TelemetryFileLoadingTests.swift`.
+
+### Phase 2 — QA gate
+
+- [x] `swift build -c release` green; `swift test` 26/26 green (25 existing + 1 new); `FOCUS5_KINDTEST=1 swift run Focus5Float` → "KINDTEST OK — 7 cases"; `FOCUS5_SELFTEST=1` still prints the sample roster correctly.
+- [x] Manual assertion covers the JSON-with-many-rows and multi-KB-markdown cases via the discriminator test; the JSON decode path (`JSONDecoder`, `telemetryEntries =`) shows zero diff, confirming byte-for-byte unchanged behavior.
+- [x] `pytest tests/` unaffected — no Python surface touched by this lane.
+- [x] Shipped via `make-app.sh` — ad-hoc signed and installed to `/Applications/Focus 5 Float.app`.
+
+**Shipped 2026-07-16 via MARATHON-2026-07-16-B Lane B (PR #134, merged to `development`).**
+
+### Phase 2 — anti-goals
+
+- Not adding markdown editing, syntax highlighting, or export.
+- Not supporting formats beyond `.json` and `.md`.
+
+---
+
+## Anti-goals
+
+- **Not a rewrite of the telemetry tab.** One picker + one render branch on file extension; the JSON
+  path is byte-for-byte unchanged.
+- **Not a second markdown renderer.** Reuse the bottom-note markdown rendering the app already ships.
+- **Not editing.** Read-only viewer. No write-back, no format conversion.
+- **Not touching Python/server.** Pure macOS-client change under `macOS/Apps/Focus5Float/*`.

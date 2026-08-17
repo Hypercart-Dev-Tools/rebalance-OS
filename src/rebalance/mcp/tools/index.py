@@ -187,6 +187,82 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         from rebalance.ingest.pulse import publish_pulse as _publish_pulse
         return _publish_pulse(database_path, dry_run=dry_run, push=push)
 
+    # Raw source tables a client may peek, mapped to the column to sort newest-first.
+    # The caller's `source` is validated against THIS dict — its keys are the only
+    # table names ever placed into SQL, so a caller can never reach an arbitrary table.
+    _PEEKABLE_SOURCES: dict[str, str] = {
+        "github_activity": "scanned_at",
+        "github_commits": "committed_at",
+        "github_items": "updated_at",
+        "calendar_events": "start_time",
+        "sleuth_reminders": "last_seen_at",
+        "email_messages": "received_at",
+        "project_registry": "name",
+    }
+
+    @mcp.tool()
+    def peek_source(source: str, limit: int = 20) -> dict[str, Any]:
+        """
+        Read the most-recent raw rows from one ingest source table — the literal
+        incoming data, before any synthesis. Complements the search/rollup tools
+        (semantic_query, index_status) when you want to eyeball what actually landed.
+
+        Read-only and allowlisted: ``source`` must be one of the known source
+        tables; anything else returns an error listing the valid names. ``limit``
+        is clamped to 1..200. There is no free-form SQL — only "last N rows,
+        newest first".
+
+        Args:
+            source: One of github_activity, github_commits, github_items,
+                calendar_events, sleuth_reminders, email_messages, project_registry.
+            limit: How many rows (default 20, max 200).
+
+        Returns: {source, count, rows:[...]} or {error, valid_sources:[...]}.
+        """
+        order_col = _PEEKABLE_SOURCES.get(source)
+        if order_col is None:
+            return {
+                "error": f"unknown source '{source}'",
+                "valid_sources": sorted(_PEEKABLE_SOURCES),
+            }
+        n = max(1, min(int(limit), 200))
+        from rebalance.ingest.db import db_connection
+
+        with db_connection(database_path) as conn:
+            rows = conn.execute(
+                # source/order_col come from the allowlist dict, never the caller.
+                f"SELECT * FROM {source} ORDER BY {order_col} DESC LIMIT ?",
+                (n,),
+            ).fetchall()
+        result = [dict(r) for r in rows]
+        return {"source": source, "count": len(result), "rows": result}
+
+    @mcp.tool()
+    def get_next_actions() -> dict[str, Any]:
+        """
+        Read the latest persisted "what should we work on next" ranking — the
+        synthesized headline the dashboard shows — WITHOUT recomputing it.
+
+        This is the cheap read of the cached result (no model load). `ask()` reads
+        the SAME persisted ranking under its `hiqs` key, so the two can never
+        disagree; neither recomputes. A fresh rank is produced by the refresh path
+        that writes the cache. Returns the ranked list plus its freshness metadata
+        (computed_at, model_used, blended, cached row count), or an empty ranking
+        with a note on a brand-new / never-computed DB.
+        """
+        from rebalance.ingest.next_actions import (
+            get_ranked_meta,
+            load_ranked_next_actions,
+        )
+
+        ranked = load_ranked_next_actions(database_path)
+        meta = get_ranked_meta(database_path)
+        if ranked is None:
+            return {"ranked": [], "meta": meta, "note": "no ranking computed yet"}
+        out = ranked.as_dict()
+        out["meta"] = meta
+        return out
+
     @mcp.tool()
     def semantic_query(
         query: str,

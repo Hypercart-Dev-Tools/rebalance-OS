@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html, body { margin: 0; padding: 0; }
+  a { color: #2456c7; text-decoration: none; }
+  a:hover { color: #16388a; text-decoration: underline; }
+  * { box-sizing: border-box; }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: {{ th.page }}; color: {{ th.ink }}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; transition: background 0.25s, color 0.25s;">
+  <div style="max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <div style="font-size: 13px; color: {{ th.muted }};"><a href="#pulse">Pulse</a> <span style="opacity: 0.5;">/</span> <span style="font-weight: 600; color: {{ th.ink }};">Settings</span></div>
+    </div>
+
+    <section style="background: {{ th.card }}; border: 1px solid {{ th.border }}; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 18px; transition: background 0.25s, border-color 0.25s;">
+      <div style="display: flex; flex-direction: column; gap: 3px;">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Color theme</h2>
+        <div style="color: {{ th.muted }};">Applies to all Pulse dashboard pages and modules.</div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px;">
+        <sc-for list="{{ themes }}" as="t" hint-placeholder-count="5">
+          <div onClick="{{ t.pick }}" style="border: 2px solid {{ t.ring }}; border-radius: 10px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; background: {{ th.card }};" style-hover="border-color: {{ t.ringHover }};">
+            <!-- mini dashboard preview -->
+            <div style="border-radius: 6px; overflow: hidden; background: {{ t.p.page }}; border: 1px solid {{ t.p.border }}; height: 84px; padding: 8px; display: flex; flex-direction: column; gap: 5px;">
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <span style="width: 8px; height: 8px; border-radius: 3px; background: {{ t.p.accent }};"></span>
+                <span style="width: 34px; height: 4px; border-radius: 99px; background: {{ t.p.ink }}; opacity: 0.75;"></span>
+              </div>
+              <div style="flex: 1; border-radius: 4px; background: {{ t.p.card }}; border: 1px solid {{ t.p.border }}; padding: 5px 6px; display: flex; flex-direction: column; gap: 4px;">
+                <span style="width: 60%; height: 4px; border-radius: 99px; background: {{ t.p.ink }}; opacity: 0.7;"></span>
+                <span style="width: 85%; height: 4px; border-radius: 99px; background: {{ t.p.muted }};"></span>
+                <span style="width: 75%; height: 4px; border-radius: 99px; background: {{ t.p.muted }};"></span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 7px; padding: 0 4px 4px;">
+              <span style="width: 14px; height: 14px; border-radius: 99px; flex-shrink: 0; border: 2px solid {{ t.dotRing }}; background: {{ t.dotFill }};"></span>
+              <span style="font-weight: 600; font-size: 12.5px;">{{ t.name }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+        <div style="border-top: 1px solid {{ th.border }}; padding-top: 16px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: {{ th.muted }}; text-transform: uppercase;">Fine-tune colors</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px;">
+            <sc-for list="{{ customFields }}" as="f" hint-placeholder-count="5">
+              <label style="display: flex; align-items: center; gap: 10px; border: 1px solid {{ th.border }}; border-radius: 8px; padding: 8px 10px; cursor: pointer;">
+                <input type="color" value="{{ f.val }}" onChange="{{ f.set }}" style="width: 28px; height: 28px; border: none; padding: 0; background: none; cursor: pointer;"></input>
+                <span style="display: flex; flex-direction: column; gap: 1px;">
+                  <span style="font-weight: 600; font-size: 12px;">{{ f.label }}</span>
+                  <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 10.5px; color: {{ th.muted }};">{{ f.val }}</span>
+                </span>
+              </label>
+            </sc-for>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <span onClick="{{ saveTheme }}" style="background: {{ th.accent }}; color: {{ th.accentInk }}; font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: {{ saveCursor }}; opacity: {{ saveOpacity }};">Save</span>
+            <span onClick="{{ resetTheme }}" style="border: 1px solid {{ th.border }}; color: {{ th.ink }}; font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer;">Reset</span>
+            <span style="font-size: 11.5px; color: {{ th.muted }};">Reset returns to the selected theme's defaults.</span>
+          </div>
+        </div>
+    </section>
+
+    <!-- Live preview -->
+    <section style="background: {{ th.card }}; border: 1px solid {{ th.border }}; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 12px; transition: background 0.25s, border-color 0.25s;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Preview</h2>
+        <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: {{ th.muted }};">theme: {{ themeName }}</span>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <sc-for list="{{ sampleRows }}" as="r" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: {{ r.bg }};">
+            <span style="width: 15px; height: 15px; border: 1.5px solid {{ th.muted }}; border-radius: 4px; flex-shrink: 0; opacity: 0.6;"></span>
+            <span style="font-weight: 500; flex: 1;">{{ r.t }}</span>
+            <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: {{ th.timestamp }}; white-space: nowrap;">{{ r.ts }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="position: relative; border: 1px solid {{ th.border }}; border-radius: 8px; height: 56px; margin: 2px 0 6px;">
+        <span style="position: absolute; left: 10px; top: 8px; font-size: 10.5px; color: {{ th.timestamp }};">1 PM</span>
+        <span style="position: absolute; left: 48px; right: 10px; top: 12px; border-top: 1px solid {{ th.border }};"></span>
+        <span style="position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: {{ th.timestamp }};">2 PM</span>
+        <span style="position: absolute; left: 48px; right: 10px; bottom: 12px; border-top: 1px solid {{ th.border }};"></span>
+        <span style="position: absolute; left: 48px; right: 10px; top: 27px; display: flex; align-items: center;">
+          <span style="width: 11px; height: 11px; border-radius: 99px; background: {{ th.nowline }}; margin-left: -5px; flex-shrink: 0;"></span>
+          <span style="flex: 1; height: 2px; background: {{ th.nowline }};"></span>
+        </span>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <span style="background: {{ th.accent }}; color: {{ th.accentInk }}; font-weight: 600; font-size: 12px; border-radius: 7px; padding: 6px 14px; cursor: pointer;">Primary action</span>
+        <span style="border: 1px solid {{ th.border }}; color: {{ th.ink }}; font-weight: 600; font-size: 12px; border-radius: 7px; padding: 6px 14px; cursor: pointer;">Secondary</span>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    theme: 'default',
+    colors: null, // working copy; null = preset defaults
+    savedSnapshot: null,
+  };
+  componentDidMount() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pulse-theme-settings-v2'));
+      if (saved && saved.theme) this.setState({ theme: saved.theme, colors: saved.colors, savedSnapshot: JSON.stringify(saved) });
+    } catch (e) {}
+  }
+  baseColors(key) {
+    const p = key === 'custom' ? Component.PRESETS.default : Component.PRESETS[key];
+    return { page: p.page, card: p.card, ink: p.ink, accent: p.accent, border: p.border, nowline: p.nowline, timestamp: p.timestamp };
+  }
+  persist() {
+    const snap = JSON.stringify({ theme: this.state.theme, colors: this.state.colors });
+    localStorage.setItem('pulse-theme-settings-v2', snap);
+    this.setState({ savedSnapshot: snap });
+  }
+  static PRESETS = {
+    default:  { name: 'Current default', page: '#f2efe8', card: '#ffffff', ink: '#211c14', muted: '#97907d', border: '#e3ddcd', accent: '#2456c7', accentInk: '#ffffff', zebra: '#f6f3ea', nowline: '#d43d2a', timestamp: '#97907d' },
+    dark:     { name: 'Dark mode',       page: '#191713', card: '#242019', ink: '#f0ece1', muted: '#8f887a', border: '#3a3529', accent: '#6f97ea', accentInk: '#10131c', zebra: '#2b2720', nowline: '#e05a48', timestamp: '#8f887a' },
+    grey:     { name: 'Grey mode',       page: '#ececec', card: '#ffffff', ink: '#1e1e1e', muted: '#8a8a8a', border: '#dcdcdc', accent: '#444444', accentInk: '#ffffff', zebra: '#f4f4f4', nowline: '#d43d2a', timestamp: '#8a8a8a' },
+    lightblue:{ name: 'Light blue',      page: '#e9f0f7', card: '#ffffff', ink: '#16283c', muted: '#7d90a5', border: '#d3e0ee', accent: '#1d6fd1', accentInk: '#ffffff', zebra: '#f2f7fc', nowline: '#d43d2a', timestamp: '#7d90a5' },
+  };
+  themeOf(key, colors) {
+    const preset = key === 'custom' ? null : Component.PRESETS[key];
+    if (preset && !colors) return preset;
+    const c = colors || this.baseColors(key);
+    const dark = this.isDark(c.page);
+    return { name: preset ? preset.name : 'Custom', page: c.page, card: c.card, ink: c.ink, muted: this.mix(c.ink, c.page, 0.45), border: c.border, accent: c.accent, accentInk: this.isDark(c.accent) ? '#ffffff' : '#111111', zebra: this.mix(c.card, dark ? '#ffffff' : '#000000', 0.96), nowline: c.nowline, timestamp: c.timestamp };
+  }
+  isDark(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) < 128;
+  }
+  mix(a, b, w) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const ch = (sh) => Math.round(((pa >> sh) & 255) * w + ((pb >> sh) & 255) * (1 - w));
+    return '#' + [16, 8, 0].map(sh => ch(sh).toString(16).padStart(2, '0')).join('');
+  }
+  renderVals() {
+    const { theme, colors, savedSnapshot } = this.state;
+    const working = colors || this.baseColors(theme);
+    const th = this.themeOf(theme, colors);
+    const keys = ['default', 'dark', 'grey', 'lightblue', 'custom'];
+    const themes = keys.map(k => {
+      const p = this.themeOf(k, k === theme ? colors : null);
+      const sel = theme === k;
+      return {
+        name: p.name, p,
+        ring: sel ? th.accent : th.border,
+        ringHover: sel ? th.accent : th.muted,
+        dotRing: sel ? th.accent : th.muted,
+        dotFill: sel ? th.accent : 'transparent',
+        pick: () => this.setState({ theme: k, colors: null }),
+      };
+    });
+    const labels = { page: 'Page background', card: 'Card background', ink: 'Text', accent: 'Accent', border: 'Borders', nowline: 'Calendar time line', timestamp: 'Date + time text' };
+    const customFields = Object.keys(labels).map(k => ({
+      label: labels[k], val: working[k],
+      set: (e) => this.setState({ colors: { ...working, [k]: e.target.value } }),
+    }));
+    const dirty = savedSnapshot !== JSON.stringify({ theme, colors });
+    const modified = !!colors && theme !== 'custom';
+    const rows = [
+      { t: 'Invoice Taiwo', ts: '2026-07-18 9:00 AM' },
+      { t: 'Rebalance PRs', ts: '2026-07-18 1:45 PM' },
+      { t: 'Team Call', ts: 'July 19 1:45 PM' },
+      { t: 'Submit Sleuth to Product Hunt', ts: 'July 20 9:00 AM' },
+    ];
+    return {
+      th, themes, customFields,
+      themeName: th.name + (modified ? ' (modified)' : ''),
+      saveTheme: () => this.persist(),
+      resetTheme: () => this.setState({ colors: null }),
+      saveOpacity: dirty ? 1 : 0.45,
+      saveCursor: dirty ? 'pointer' : 'default',
+      sampleRows: rows.map((r, i) => ({ ...r, bg: i % 2 === 1 ? th.zebra : 'transparent' })),
+    };
+  }
+}
+</script>
+</body>
+</html>

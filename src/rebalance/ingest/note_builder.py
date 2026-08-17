@@ -19,7 +19,7 @@ from rebalance.ingest.calendar_config import (
 from rebalance.ingest.calendar_helpers import event_duration_minutes
 from rebalance.ingest.config import get_gemini_api_key
 from rebalance.ingest.db import db_connection, ensure_calendar_schema
-from rebalance.tz_utils import local_tz
+from rebalance.tz_utils import format_local, local_tz
 from rebalance.ingest.project_priority import apply_project_priorities
 from rebalance.ingest.project_classifier import annotate_events_with_projects, load_project_matchers
 from rebalance.ingest.registry import get_projects
@@ -495,13 +495,7 @@ def render_dashboard_markdown(
 
 def _format_generated_at(value: str) -> str:
     """Format an ISO timestamp for the visible dashboard freshness marker."""
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return value
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(local_tz()).strftime("%Y-%m-%d %H:%M:%S %Z")
+    return format_local(value, "%Y-%m-%d %H:%M:%S %Z", tz=local_tz()) or value
 
 
 def build_dashboard_note_content(
@@ -513,7 +507,7 @@ def build_dashboard_note_content(
     changelog_path: Path = DEFAULT_CHANGELOG_PATH,
     goals_path: Path = DEFAULT_4X4_PATH,
     gemini_synthesis: bool = False,
-    gemini_model: str = "gemini-2.5-flash",
+    gemini_model: str = "gemini-3.5-flash",
     cleanup: bool = False,
 ) -> str:
     """Build the final dashboard markdown, optionally with Gemini summary."""

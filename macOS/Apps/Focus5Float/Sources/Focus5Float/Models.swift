@@ -10,6 +10,11 @@ import Foundation
 struct Focus5Response: Codable {
     let roster: [RepoCard]
     let offRosterWarnings: [OffRosterWarning]
+    // GH-105: single most-recently-touched dirty off-roster repo, or nil — a
+    // slim "BTW, this went dirty" nudge. Server-computed (pick_newest_dirty_
+    // off_roster in focus5_scan.py); already nil on a Dirty Five rerank
+    // (?view=dirty), so no client-side view check is needed.
+    let dirtyBanner: OffRosterWarning?
     let computedAt: String?          // ISO-8601; nil when roster empty
     let rankingMode: String?         // "recent_activity" | "dirty_first" | nil
     let summary: Summary
@@ -84,4 +89,39 @@ struct OffRosterWarning: Codable, Identifiable {
     let untrackedCount: Int
     let isDirty: Bool
     let probedAt: String?
+    // GH-105: last local commit before this repo went dirty (epoch seconds) —
+    // was already on the wire for every off-roster row (GH-81) but unmodeled
+    // here; needed now to render "last commit Xh ago" on the dirty banner.
+    let myLocalCommitTs: Int?
+    // GH-104: server-computed off-roster reason ("uncommitted changes",
+    // "N ahead of origin", fallback) from focus5_scan.off_roster_reason().
+    let warningReason: String?
+}
+
+struct Focus5GoalsResponse: Codable {
+    let exists: Bool
+    let items: [ObsidianReminder]
+    let path: String?
+    let totalOpen: Int
+    let reason: String?
+    let message: String?
+}
+
+struct Focus5GoalCompleteResponse: Codable {
+    let ok: Bool
+    let title: String
+    let lineIndex: Int
+    let exists: Bool
+    let items: [ObsidianReminder]
+    let path: String?
+    let totalOpen: Int
+    let reason: String?
+    let message: String?
+}
+
+struct ObsidianReminder: Codable, Identifiable {
+    var id: Int { lineIndex }
+    let title: String
+    let description: String
+    let lineIndex: Int
 }

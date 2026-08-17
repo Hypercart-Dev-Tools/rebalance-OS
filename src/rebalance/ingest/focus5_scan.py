@@ -45,6 +45,7 @@ from rebalance.ingest.sync_snapshot import get_device_id
 # Reuse the prune discipline and the (already tested) remote-URL → owner/repo
 # parser rather than duplicating them; both are low-churn and shared by intent.
 from rebalance.ingest.ask_self_scan import _PRUNE_DIRS, derive_repo_full_name
+from rebalance.lib.git_ops import _git
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,43 @@ def explain_recency(
     if note:
         parts.append(note)
     return " · ".join(parts)
+
+
+def pick_newest_dirty_off_roster(off_roster_warnings: list[dict]) -> dict | None:
+    """The single most-recently-touched dirty repo outside the top 5 (GH-105).
+
+    A slim "BTW, recent work made this dirty" banner needs exactly one repo,
+    not the full off-roster list ``_f5_warning_strip`` already renders. Ranks
+    by ``my_local_commit_ts`` (last authored commit before it went dirty) —
+    never ``index_mtime_ts`` (clone/fetch pollution; see module docstring) —
+    so a repo the operator hasn't touched in months but merely re-cloned can't
+    win. Ties broken by ``repo_name`` for determinism. Returns ``None`` when no
+    off-roster repo is dirty (unpushed-only entries don't count — this banner
+    is specifically "you left uncommitted work", not "you forgot to push").
+    """
+    candidates = [
+        w for w in off_roster_warnings
+        if w.get("is_dirty") and w.get("my_local_commit_ts") is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda w: (w["my_local_commit_ts"], w["repo_name"]))
+
+
+def off_roster_reason(w: dict | RepoSignals) -> str:
+    """The short, specific reason why a repo is in off-roster warnings (GH-104)."""
+    if isinstance(w, dict):
+        is_dirty = w.get("is_dirty")
+        ahead = w.get("ahead") or 0
+    else:
+        is_dirty = w.is_dirty
+        ahead = w.ahead or 0
+
+    if is_dirty:
+        return "uncommitted changes"
+    if ahead > 0:
+        return f"{ahead} ahead of origin"
+    return "needs attention"
 
 
 # ---------------------------------------------------------------------------
@@ -436,20 +474,6 @@ def iter_git_repos(
 # ---------------------------------------------------------------------------
 # Signal probing — read-only git plumbing per repo
 # ---------------------------------------------------------------------------
-
-def _git(repo: Path, *args: str, timeout: int = GIT_TIMEOUT) -> str | None:
-    """Run a read-only git command in *repo*; return stdout or None on any failure."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True, text=True, check=False, timeout=timeout,
-        )
-    except Exception:  # noqa: BLE001 — git missing / hung / unreadable repo
-        return None
-    if proc.returncode != 0:
-        return None
-    return proc.stdout
-
 
 def _parse_status(out: str) -> dict[str, Any]:
     """Parse ``git status --porcelain=v2 --branch`` into health fields."""
@@ -910,6 +934,22 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     }
 
 
+def _repo_path_live(local_path: Any) -> bool:
+    """True if *local_path* is still a git repo on disk (the discovery predicate).
+
+    Mirrors ``iter_git_repos`` (a repo is a dir containing ``.git``): a checkout or
+    worktree removed from disk fails this, so a stale cached row can be dropped from
+    a read-only ``summarize_focus5`` without waiting for the next full disk resync.
+    """
+    if not local_path:
+        return False
+    try:
+        p = Path(local_path)
+        return p.exists() and (p / ".git").exists()
+    except OSError:
+        return False
+
+
 def _build_roster_card(
     conn: Any, base: dict[str, Any], *, with_activity: bool, with_live_health: bool,
 ) -> dict[str, Any]:
@@ -946,7 +986,7 @@ def _build_roster_card(
 def summarize_focus5(
     database_path: Path, *, device_id: str | None = None,
     with_activity: bool = True, with_live_health: bool = True,
-    mode: str | None = None,
+    mode: str | None = None, drop_missing_paths: bool = True,
 ) -> dict[str, Any]:
     """Return the roster cards, off-roster warnings, and snapshot metadata.
 
@@ -975,7 +1015,7 @@ def summarize_focus5(
     """
     dev = device_id or get_device_id()
     empty = {
-        "roster": [], "off_roster_warnings": [],
+        "roster": [], "off_roster_warnings": [], "dirty_banner": None,
         "computed_at": None, "ranking_mode": None,
         "summary": {"discovered": 0, "roster_size": 0,
                     "off_roster_attention": 0, "rank_cutoff_ts": None},
@@ -1011,6 +1051,12 @@ def summarize_focus5(
                      "ranking_mode": mode, "computed_at": computed_at}
                     for r in ranked
                 ]
+            # Drop cached entries whose checkout/worktree was removed from disk
+            # (GH-109): the Mac app's refresh is read-only and never re-scans, so a
+            # deleted repo would otherwise linger until the next full sync. Off for
+            # pure-ranking unit tests that seed synthetic (non-on-disk) signal rows.
+            if drop_missing_paths:
+                bases = [b for b in bases if _repo_path_live(b.get("local_path"))]
             roster = [
                 _build_roster_card(conn, b, with_activity=with_activity,
                                    with_live_health=with_live_health)
@@ -1032,12 +1078,17 @@ def summarize_focus5(
                 "ORDER BY is_dirty DESC, ahead DESC, repo_name",
                 (dev,),
             ).fetchall()
-            off_roster = [
-                {**{k: w[k] for k in w.keys()}, "is_dirty": bool(w["is_dirty"])}
-                for w in warn_rows
-                if w["local_path"] not in roster_paths
-                and (w["repo_full_name"] or w["local_path"]) not in hidden
-            ]
+            off_roster = []
+            for w in warn_rows:
+                if w["local_path"] in roster_paths:
+                    continue
+                if drop_missing_paths and not _repo_path_live(w["local_path"]):  # GH-109
+                    continue
+                if (w["repo_full_name"] or w["local_path"]) in hidden:
+                    continue
+                wd = {**{k: w[k] for k in w.keys()}, "is_dirty": bool(w["is_dirty"])}
+                wd["warning_reason"] = off_roster_reason(wd)
+                off_roster.append(wd)
 
             discovered = conn.execute(
                 "SELECT COUNT(*) FROM focus5_repo_signals WHERE device_id=?", (dev,)
@@ -1054,10 +1105,16 @@ def summarize_focus5(
     # view (Dirty Five reranks under dirty_first) must NOT publish a cutoff that the
     # renderer would then mislabel with Focus 5 semantics. (Codex relay r2.)
     rank_cutoff_ts = roster[-1].get("my_local_commit_ts") if (roster and mode is None) else None
+    # GH-105: single "BTW, this went dirty" nudge — headline board only. Like
+    # rank_cutoff_ts above, a transient Dirty Five rerank (mode is not None)
+    # already shows every dirty repo as a full card, so the banner would be
+    # redundant there; gate it to the default recent_activity view.
+    dirty_banner = pick_newest_dirty_off_roster(off_roster) if mode is None else None
 
     return {
         "roster": roster,
         "off_roster_warnings": off_roster,
+        "dirty_banner": dirty_banner,
         "computed_at": roster[0]["computed_at"] if roster else None,
         "ranking_mode": roster[0]["ranking_mode"] if roster else None,
         "summary": {

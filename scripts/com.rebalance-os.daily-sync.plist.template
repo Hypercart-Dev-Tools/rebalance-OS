@@ -33,6 +33,13 @@
     <key>KeepAlive</key>
     <false/>
 
+    <!-- Batch job: yield to interactive work (GH-175 remediation 3). This is
+         responsiveness hygiene, NOT a GH-172 mitigation — that panic came from
+         kernel_task compression starving watchdogd, which Nice does not affect.
+         The GH-172 fix is the job guard inside the embedding leaves. -->
+    <key>Nice</key>
+    <integer>5</integer>
+
     <key>ProcessType</key>
     <string>Background</string>
 </dict>

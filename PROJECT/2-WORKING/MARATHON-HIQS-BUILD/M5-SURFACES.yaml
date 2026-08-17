@@ -1,0 +1,40 @@
+# M5-SURFACES.yaml — HiQS Phase 4, CODE ONLY. Fires ONLY after operator checkpoint B.
+#
+# SCOPE BOUNDARY: builds the one web page and the launchd template + installer. It does NOT
+# install the job, verify keyring on the real device, confirm the DB path is outside TCC-protected
+# space, or run the week unattended — all four are checkpoint C, and all four are real-device
+# state that a headless turn cannot establish. This repo has the scar for the keyring one: a write
+# that silently no-ops still prints success.
+#
+# WRITE-SETS (disjoint):
+#   p1  HiQS/hiqs/web.py, HiQS/tests/test_web.py
+#   p2  HiQS/ops/com.hiqs.refresh.plist.template, HiQS/ops/install_scheduler.sh, HiQS/tests/test_ops.py
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=agy, so it MUST run with --builder codex. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m5-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m5-surfaces
+phases:
+  - id: hiqs-m5-p1
+    name: "web.py — ONE page, stdlib http.server, zero JS, loopback only"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m5-p1-web.md
+    artifact: HiQS/hiqs/web.py,HiQS/tests/test_web.py
+    turn_timeout_s: 1800
+    max_review_rounds: 3
+
+  - id: hiqs-m5-p2
+    name: "ops — one launchd job, rendered per machine, no baked paths"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m5-p2-ops.md
+    artifact: HiQS/ops/com.hiqs.refresh.plist.template,HiQS/ops/install_scheduler.sh,HiQS/tests/test_ops.py
+    turn_timeout_s: 1500
+    depends_on: hiqs-m5-p1
+    max_review_rounds: 2

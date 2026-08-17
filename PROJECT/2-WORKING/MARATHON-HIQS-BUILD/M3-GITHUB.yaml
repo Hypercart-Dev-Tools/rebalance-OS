@@ -1,0 +1,71 @@
+# M3-GITHUB.yaml — HiQS Phase 2.
+#
+# CHECKPOINT-A ORDERING, decided by the operator 2026-08-03: M3 runs BEFORE checkpoint A.
+# The original header said "fires ONLY after checkpoint A" because that gate can delete torch and
+# change the embedding path in docs_index.py. That reasoning holds for anything touching the
+# EMBEDDING path — and nothing in this marathon does. p1/p2 are a stdlib-urllib fetch and an
+# attested candidates() provider. p3's widening runs POST-fusion, after RRF and after the per-doc
+# cap, so it is identical whether the vector leg survives or not. p4 is literal string matching.
+# If the vector leg loses at checkpoint A, none of these four phases is rebuilt. Recorded as an
+# explicit reordering rather than done quietly, because the original constraint was real.
+#
+# WRITE-SETS:
+#   p1  HiQS/hiqs/sources/github.py, HiQS/tests/test_github.py
+#   p2  HiQS/hiqs/sources/github.py (candidates fn), HiQS/tests/test_github_candidates.py
+#   p3  HiQS/hiqs/affinity.py, db.py (project_affinity), search.py (widening), tests
+#   p4  HiQS/hiqs/docs_index.py (reference edges), db.py, tests
+#   NOTE: p2 extends p1's file — depends_on p1 is REQUIRED, not decorative.
+#
+# ALLOWLISTS ARE DELIBERATELY WIDE — do not trim them. Five phases halted across M1/M2 and THREE
+# were the same defect: a phase whose deliverable named a file it was not permitted to write, which
+# deadlocks a correct reviewer against a correct builder and yields plausible workarounds instead
+# of an error (xyz-3-agents-swarm#412). p3 declares affinity.py AND db.py AND search.py because it
+# cannot deliver "widens search" without all three. p3 and p4 share db.py; sequential execution
+# (GH-241) makes that safe.
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=agy, so it MUST run with --builder codex. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m3-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m3-github
+phases:
+  - id: hiqs-m3-p1
+    name: "github.py — activity scan + item sync over stdlib urllib"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p1-github-fetch.md
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github.py,HiQS/pyproject.toml
+    turn_timeout_s: 1800
+    max_review_rounds: 3
+
+  - id: hiqs-m3-p2
+    name: "github candidates() — attested, with owed_by/due/activity_at"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p2-github-candidates.md
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github_candidates.py,HiQS/pyproject.toml
+    turn_timeout_s: 1500
+    depends_on: hiqs-m3-p1
+    max_review_rounds: 3
+
+  - id: hiqs-m3-p3
+    name: "affinity.py — sibling-project edges that widen search, never narrow it"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p3-affinity.md
+    artifact: HiQS/hiqs/affinity.py,HiQS/hiqs/db.py,HiQS/hiqs/search.py,HiQS/tests/test_affinity.py,HiQS/tests/test_search.py,HiQS/tests/test_db.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m3-p2
+    max_review_rounds: 4
+
+  - id: hiqs-m3-p4
+    name: "reference linking — note text to GitHub item, literal matches only"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p4-reference-links.md
+    artifact: HiQS/hiqs/docs_index.py,HiQS/hiqs/db.py,HiQS/tests/test_docs_index.py,HiQS/tests/test_db.py,HiQS/tests/test_contract.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m3-p3
+    max_review_rounds: 4

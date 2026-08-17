@@ -1,0 +1,79 @@
+# CONTAINMENT NOTE — allowlist entries must be CONCRETE FILE PATHS, never directories.
+# rtl_in_allow() does exact string matching. A bare directory entry such as
+# `utils/3-eyes/registry/jobs.d` does NOT match a new file `.../jobs.d/daily-sync.toml`:
+# git porcelain reports the new file individually (the collapsed `dir/` form only appears
+# when the whole directory is untracked, and even then the allowlist must contain a
+# concrete descendant). That mismatch cost THREE consecutive exit-6 containment failures
+# on 2026-07-28 — codex's work was correct every time and discarded every time, because
+# the .toml files it was asked to create could never match a directory entry.
+# GH-195 P8 — fleet adoption, all 19 real targets in waves.
+#
+# Scope boundary, and it is the important line in this file: every phase here AUTHORS
+# registry entries, tests, and catalog curation. NOT ONE of them runs
+# `three_eyes install`, `launchctl bootstrap`, or `launchctl bootout`.
+#
+# `launchd.install()` writes a plist and then runs `launchctl bootout` + `bootstrap`
+# against the operator's live session — it replaces running automations on the machine
+# that does this person's actual work (GA4 pulls, pulse publishing, git sync, vault
+# ingest). That cutover is a human act, gated on the runbook p5 produces. A headless
+# builder must never perform it.
+#
+# Counts: CATALOG.md lists 21 to-adopt. Two of those are the Cactus sentinels the
+# operator deleted on 2026-07-27 (`com.neochro.sentinel-daemon` and `.sleuth-app`) —
+# they are removal targets, not adoption targets, handled in p1. Real total: 19.
+#   in-repo commands  (committed registry/jobs.d/)      : 11
+#   absolute paths outside rebalance-OS (jobs.local.d/) :  8
+# Builder is codex (the --builder default, cost-blind), so every reviewer must be agy —
+# marathon-drive refuses a phase where builder and reviewer are the same agent id, and
+# the dry-run caught exactly that on the first attempt.
+# Phase ids are PLAN-SCOPED, not generic p1..p5. The tick token is named
+# MARATHON-<ID>-TURN from the phase id ALONE — not the plan name — so a plan using
+# `p1` collides with the spent token of every earlier marathon in this repo. That is
+# exactly how the first attempt halted: MARATHON-P1-TURN was already open and reserved
+# for 'claude' from a prior run, and a spent token cannot be reclaimed. Earlier plans
+# here used `clio-p1` / `gh135-p1` for the same reason.
+# DASHBOARD.md is in the wave1/wave2 allowlists because their briefs require
+# `sync-dashboard` to be regenerated and committed. It is deliberately ABSENT from
+# wave3's, whose brief requires DASHBOARD.md to be unchanged — leaving it off the
+# allowlist makes containment enforce that requirement instead of merely stating it.
+# RESUME plan. p8-hygiene is approved (MARATHON-P8-HYGIENE-TURN status=done) and is
+# omitted — a spent token cannot be reclaimed. p8-wave1's token was spent by the
+# containment escalation, so it needs `--retry p8-wave1`; wave2/wave3/cutover tokens
+# were never seeded and keep their original ids.
+name: gh195-p8-fleet-adoption-resume
+phases:
+
+  - id: p8-wave1
+    name: Wave 1 — the collectors that actually break
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p2-wave1.md
+    artifact: utils/3-eyes/registry/jobs.d/daily-sync.toml,utils/3-eyes/registry/jobs.d/github-sync.toml,utils/3-eyes/registry/jobs.d/vault-sync.toml,utils/3-eyes/registry/jobs.d/health-check.toml,utils/3-eyes/registry/jobs.d/health-check-triage.toml,utils/3-eyes/registry/jobs.d/collector-health.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+
+  - id: p8-wave2
+    name: Wave 2 — pulse and obsidian
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p3-wave2.md
+    artifact: utils/3-eyes/registry/jobs.d/pulse-sync.toml,utils/3-eyes/registry/jobs.d/pulse-web-sync.toml,utils/3-eyes/registry/jobs.d/pulse-warning-watch.toml,utils/3-eyes/registry/jobs.d/obsidian-daily-sync.toml,utils/3-eyes/registry/jobs.d/obsidian-rollover.toml,utils/3-eyes/registry/jobs.d/stickies2obsidian.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave2.py,utils/3-eyes/DASHBOARD.md
+    turn_timeout_s: 1200
+    depends_on: p8-wave1
+    max_review_rounds: 2
+
+  - id: p8-wave3
+    name: Wave 3 — machine-local jobs in the gitignored overlay
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p4-wave3.md
+    artifact: utils/3-eyes/registry/jobs.local.d/prompt-log-to-md.toml,utils/3-eyes/registry/jobs.local.d/ga-pull-binoid.toml,utils/3-eyes/registry/jobs.local.d/ga-pull-bloomz.toml,utils/3-eyes/registry/jobs.local.d/ga-pull-bounce.toml,utils/3-eyes/registry/jobs.local.d/hq-rollup.toml,utils/3-eyes/registry/jobs.local.d/servers-monitor.toml,utils/3-eyes/registry/jobs.local.d/git-pulse.toml,utils/3-eyes/registry/jobs.local.d/hq-marathon-scan.toml,utils/3-eyes/registry/commands.local.allow.example,utils/3-eyes/tests/test_adoption_wave3.py
+    turn_timeout_s: 1200
+    depends_on: p8-wave2
+    max_review_rounds: 2
+
+  - id: p8-cutover
+    name: Cutover runbook and dry-run tooling (authors only; performs nothing)
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p5-cutover.md
+    artifact: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/CUTOVER.md,utils/3-eyes/three_eyes/cutover.py,utils/3-eyes/tests/test_cutover_plan.py
+    turn_timeout_s: 1200
+    depends_on: p8-wave3
+    max_review_rounds: 2

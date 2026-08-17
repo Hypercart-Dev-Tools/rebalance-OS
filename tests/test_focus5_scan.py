@@ -32,6 +32,8 @@ from rebalance.ingest.focus5_scan import (
     get_roster_meta,
     iter_git_repos,
     live_health,
+    off_roster_reason,
+    pick_newest_dirty_off_roster,
     probe_repo_signals,
     rank_repos,
     recent_activity,
@@ -345,6 +347,95 @@ class BasisBadgeTests(unittest.TestCase):
         self.assertEqual(basis_badge("local_reflog"), "")
         self.assertEqual(basis_badge("none"), "")
         self.assertEqual(basis_badge(None), "")
+
+
+# ---------------------------------------------------------------------------
+# GH-105: single "BTW, this went dirty" banner (pure)
+# ---------------------------------------------------------------------------
+
+def _off_roster_row(
+    name: str, *, is_dirty: bool = True, ahead: int = 0,
+    my_local_commit_ts: int | None = NOW, modified_count: int = 1,
+    untracked_count: int = 0,
+) -> dict:
+    return {
+        "repo_name": name, "local_path": f"/repos/{name}",
+        "repo_full_name": f"me/{name}", "branch": "development",
+        "ahead": ahead, "modified_count": modified_count,
+        "untracked_count": untracked_count, "is_dirty": is_dirty,
+        "probed_at": "2026-07-03T00:00:00Z",
+        "my_local_commit_ts": my_local_commit_ts, "recency_basis": "local_reflog",
+    }
+
+
+class PickNewestDirtyOffRosterTests(unittest.TestCase):
+    def test_empty_off_roster_yields_no_banner(self) -> None:
+        self.assertIsNone(pick_newest_dirty_off_roster([]))
+
+    def test_no_dirty_repos_yields_no_banner(self) -> None:
+        # ahead-only (unpushed, not dirty) must NOT trigger the banner — this is
+        # specifically "you left uncommitted work", not "you forgot to push".
+        rows = [_off_roster_row("clean-but-unpushed", is_dirty=False, ahead=2)]
+        self.assertIsNone(pick_newest_dirty_off_roster(rows))
+
+    def test_dirty_with_no_local_commit_is_excluded(self) -> None:
+        # A dirty-only repo the operator never committed to has nothing to rank
+        # "most recently touched" by — must not win over a repo with a real
+        # my_local_commit_ts, and alone yields no banner at all.
+        rows = [_off_roster_row("never-committed", my_local_commit_ts=None)]
+        self.assertIsNone(pick_newest_dirty_off_roster(rows))
+
+    def test_picks_the_most_recently_committed_dirty_repo(self) -> None:
+        rows = [
+            _off_roster_row("stale-dirty", my_local_commit_ts=NOW - 30 * DAY),
+            _off_roster_row("fresh-dirty", my_local_commit_ts=NOW - HOUR),
+            _off_roster_row("mid-dirty", my_local_commit_ts=NOW - DAY),
+        ]
+        winner = pick_newest_dirty_off_roster(rows)
+        self.assertEqual(winner["repo_name"], "fresh-dirty")
+
+    def test_dirty_beats_never_committed_and_unpushed_only(self) -> None:
+        rows = [
+            _off_roster_row("clean-but-unpushed", is_dirty=False, ahead=3),
+            _off_roster_row("never-committed", my_local_commit_ts=None),
+            _off_roster_row("the-real-answer", my_local_commit_ts=NOW - HOUR),
+        ]
+        winner = pick_newest_dirty_off_roster(rows)
+        self.assertEqual(winner["repo_name"], "the-real-answer")
+
+    def test_tie_break_is_deterministic(self) -> None:
+        rows = [
+            _off_roster_row("bbb", my_local_commit_ts=NOW - HOUR),
+            _off_roster_row("aaa", my_local_commit_ts=NOW - HOUR),
+        ]
+        self.assertEqual(pick_newest_dirty_off_roster(rows)["repo_name"], "bbb")
+
+
+class OffRosterReasonTests(unittest.TestCase):
+    def test_dirty_repo_reason(self) -> None:
+        # If the repo is dirty, the reason must be "uncommitted changes"
+        # even if it has ahead commits as well.
+        w = _sig("wip", is_dirty=True, ahead=3)
+        self.assertEqual(off_roster_reason(w), "uncommitted changes")
+        
+        wd = {"is_dirty": True, "ahead": 3}
+        self.assertEqual(off_roster_reason(wd), "uncommitted changes")
+
+    def test_ahead_repo_reason(self) -> None:
+        # If the repo is not dirty but has ahead commits, it shows "N ahead of origin"
+        w = _sig("clean-ahead", is_dirty=False, ahead=3)
+        self.assertEqual(off_roster_reason(w), "3 ahead of origin")
+        
+        wd = {"is_dirty": False, "ahead": 5}
+        self.assertEqual(off_roster_reason(wd), "5 ahead of origin")
+
+    def test_fallback_reason(self) -> None:
+        # If not dirty and not ahead, returns fallback "needs attention"
+        w = _sig("clean-no-ahead", is_dirty=False, ahead=0)
+        self.assertEqual(off_roster_reason(w), "needs attention")
+        
+        wd = {"is_dirty": False, "ahead": 0}
+        self.assertEqual(off_roster_reason(wd), "needs attention")
 
 
 # ---------------------------------------------------------------------------
@@ -704,6 +795,51 @@ class SyncSummarizeTests(unittest.TestCase):
             sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
             out = summarize_focus5(db, device_id="dev")
             self.assertEqual(len(out["roster"]), 1)  # not duplicated on re-sync
+
+    def test_roster_drops_repo_removed_from_disk_without_resync(self) -> None:
+        # GH-109: the Mac app's refresh is a read-only summarize (no disk rescan).
+        # A checkout/worktree deleted from disk must vanish from the roster anyway,
+        # not linger from its stale cached row until the next full sync.
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "keep", dirty=True)
+            _make_git_repo(root, "gone", dirty=True)
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first", limit=2)
+            before = {c["repo_name"] for c in summarize_focus5(db, device_id="dev")["roster"]}
+            self.assertEqual(before, {"keep", "gone"})  # both rostered at limit=2
+
+            shutil.rmtree(root / "gone")  # as `git worktree remove` / rm -rf would
+
+            out = summarize_focus5(db, device_id="dev")  # read-only, NO resync
+            self.assertEqual({c["repo_name"] for c in out["roster"]}, {"keep"})
+            self.assertNotIn(
+                "gone", {w["repo_name"] for w in out["off_roster_warnings"]})
+
+    def test_off_roster_drops_repo_removed_from_disk_without_resync(self) -> None:
+        # GH-109, off-roster path: a deleted repo sitting in the attention strip must
+        # also drop on a read-only refresh (and must not get promoted into the roster).
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "a", dirty=True)
+            _make_git_repo(root, "b", dirty=True)
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first", limit=1)
+            off = summarize_focus5(db, device_id="dev")["off_roster_warnings"]
+            self.assertEqual(len(off), 1)  # one rostered, one off-roster at limit=1
+            gone_name, gone_path = off[0]["repo_name"], off[0]["local_path"]
+
+            shutil.rmtree(gone_path)  # delete the off-roster repo from disk
+
+            out = summarize_focus5(db, device_id="dev")  # read-only, NO resync
+            self.assertNotIn(
+                gone_name, {w["repo_name"] for w in out["off_roster_warnings"]})
+            self.assertNotIn(
+                gone_name, {c["repo_name"] for c in out["roster"]})  # not promoted
 
     def test_newest_pr_enrichment_joins_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1110,7 +1246,8 @@ class WebRouteTests(unittest.TestCase):
             data = resp.json()
             self.assertEqual(
                 set(data),
-                {"roster", "off_roster_warnings", "computed_at", "ranking_mode", "summary"},
+                {"roster", "off_roster_warnings", "dirty_banner", "computed_at",
+                 "ranking_mode", "summary"},
             )
             self.assertLessEqual(len(data["roster"]), 5)
             self.assertEqual(
@@ -1159,7 +1296,8 @@ class WebRouteTests(unittest.TestCase):
         data = resp.json()
         self.assertEqual(
             set(data),
-            {"roster", "off_roster_warnings", "computed_at", "ranking_mode", "summary"},
+            {"roster", "off_roster_warnings", "dirty_banner", "computed_at",
+             "ranking_mode", "summary"},
         )
         self.assertEqual(data["roster"], [])
         self.assertEqual(data["summary"]["roster_size"], 0)
@@ -1283,7 +1421,7 @@ class Focus5RerankHideTests(_ConfigIsolated):
         add_focus5_hidden_repo("Org/b")
         self.assertEqual(rerank_focus5_from_cache(self.db, device_id="dev",
                                                   mode="dirty_first"), 2)
-        out = summarize_focus5(self.db, device_id="dev",
+        out = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False,
                                with_activity=False, with_live_health=False)
         self.assertEqual({c["repo_name"] for c in out["roster"]}, {"a", "c"})
         # And it must NOT resurface in the off-roster "needs attention" strip —
@@ -1302,7 +1440,7 @@ class Focus5RerankHideTests(_ConfigIsolated):
             res = web.focus5_set_hidden("Org/b", hidden=True)
             self.assertEqual(res, {"ok": True, "changed": True,
                                    "reranked": True, "roster_size": 2})
-            out = summarize_focus5(self.db, device_id="dev",
+            out = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False,
                                    with_activity=False, with_live_health=False)
             self.assertNotIn("b", {c["repo_name"] for c in out["roster"]})
         from rebalance.ingest.config import get_focus5_hidden_repos
@@ -1332,20 +1470,20 @@ class Focus5TransientViewTests(_ConfigIsolated):
         self._seed_two()
         # Persist the default recent_activity roster.
         rerank_focus5_from_cache(self.db, device_id="dev", mode="recent_activity")
-        default = summarize_focus5(self.db, device_id="dev",
+        default = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False,
                                    with_activity=False, with_live_health=False)
         self.assertEqual([c["repo_name"] for c in default["roster"]],
                          ["clean_recent", "dirty_old"])
         self.assertEqual(default["ranking_mode"], "recent_activity")
 
         # Transient Dirty Five view: dirty_first ordering, same signal cache.
-        dirty = summarize_focus5(self.db, device_id="dev", mode="dirty_first",
+        dirty = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False, mode="dirty_first",
                                  with_activity=False, with_live_health=False)
         self.assertEqual(dirty["roster"][0]["repo_name"], "dirty_old")
         self.assertEqual(dirty["ranking_mode"], "dirty_first")
 
         # The persisted roster is UNTOUCHED — re-read still recent_activity order.
-        again = summarize_focus5(self.db, device_id="dev",
+        again = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False,
                                  with_activity=False, with_live_health=False)
         self.assertEqual([c["repo_name"] for c in again["roster"]],
                          ["clean_recent", "dirty_old"])
@@ -1353,10 +1491,54 @@ class Focus5TransientViewTests(_ConfigIsolated):
 
     def test_transient_view_carries_signal_freshness(self) -> None:
         self._seed_two()
-        out = summarize_focus5(self.db, device_id="dev", mode="dirty_first",
+        out = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False, mode="dirty_first",
                                with_activity=False, with_live_health=False)
         # computed_at reflects the cached signals' probed_at (the last sync).
         self.assertEqual(out["computed_at"], "2026-06-05T00:00:00Z")
+
+
+class DirtyBannerIntegrationTests(_ConfigIsolated):
+    """GH-105: summarize_focus5() surfaces the single newest dirty off-roster
+    repo end-to-end, via the same seeded-cache + rerank path as the transient
+    Dirty Five tests above (deterministic — no real git commit timing)."""
+
+    def _seed(self) -> None:
+        clean_active = _sig("clean_active", device_id="dev", my_last_commit_ts=NOW,
+                            local_path="/repos/clean_active", repo_full_name="Org/clean_active")
+        dirty_leftover = _sig("dirty_leftover", device_id="dev", is_dirty=True,
+                              modified_count=3, my_last_commit_ts=NOW - 5 * DAY,
+                              local_path="/repos/dirty_leftover",
+                              repo_full_name="Org/dirty_leftover")
+        _seed_signals(self.db, [clean_active, dirty_leftover])
+
+    def test_dirty_banner_surfaces_the_repo_pushed_off_the_roster(self) -> None:
+        self._seed()
+        rerank_focus5_from_cache(self.db, device_id="dev", mode="recent_activity", limit=1)
+        out = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False,
+                               with_activity=False, with_live_health=False)
+        self.assertEqual([c["repo_name"] for c in out["roster"]], ["clean_active"])
+        self.assertIsNotNone(out["dirty_banner"])
+        self.assertEqual(out["dirty_banner"]["repo_name"], "dirty_leftover")
+
+    def test_dirty_banner_absent_when_off_roster_is_all_clean(self) -> None:
+        older_clean = _sig("older_clean", device_id="dev", my_last_commit_ts=NOW - DAY,
+                           local_path="/repos/older_clean", repo_full_name="Org/older_clean")
+        newer_clean = _sig("newer_clean", device_id="dev", my_last_commit_ts=NOW,
+                           local_path="/repos/newer_clean", repo_full_name="Org/newer_clean")
+        _seed_signals(self.db, [older_clean, newer_clean])
+        rerank_focus5_from_cache(self.db, device_id="dev", mode="recent_activity", limit=1)
+        out = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False,
+                               with_activity=False, with_live_health=False)
+        self.assertIsNone(out["dirty_banner"])
+
+    def test_dirty_banner_is_none_on_transient_dirty_five_rerank(self) -> None:
+        # Dirty Five already shows every dirty repo as a full card — the banner
+        # would be redundant there, so it must be suppressed (mode is not None).
+        self._seed()
+        rerank_focus5_from_cache(self.db, device_id="dev", mode="recent_activity", limit=1)
+        out = summarize_focus5(self.db, device_id="dev", drop_missing_paths=False, mode="dirty_first",
+                               with_activity=False, with_live_health=False)
+        self.assertIsNone(out["dirty_banner"])
 
 
 class Focus5IdentityTests(unittest.TestCase):

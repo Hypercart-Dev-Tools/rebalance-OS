@@ -11,7 +11,10 @@ Resolution chains
 -----------------
 
 resolve_database_path(explicit) — find rebalance.db:
-    1. ``explicit`` argument if non-None (e.g., ``--database /path/to/db``)
+    1. ``explicit`` argument if non-None (e.g., ``--database /path/to/db``).
+       GH-201: this path is authoritative — if it doesn't exist, resolution
+       raises ``ExplicitDatabasePathNotFoundError`` immediately rather than
+       falling through to a later layer (which used to mask typos).
     2. ``REBALANCE_DB`` env var (used by launchd jobs, the MCP server, and
        any operator who exports it in their shell rc)
     3. Canonical app-data location for this platform. On macOS that is
@@ -159,16 +162,63 @@ class DatabaseNotFoundError(FileNotFoundError):
         super().__init__(message)
 
 
+class ExplicitDatabasePathNotFoundError(DatabaseNotFoundError):
+    """Raised when an explicit database path (``--database`` / ``REBALANCE_DB``)
+    is given but doesn't exist on disk (GH-201).
+
+    This is deliberately distinct from the generic :class:`DatabaseNotFoundError`
+    (all layers exhausted): here the caller named an exact path, so the resolver
+    must honor it or fail loudly — silently falling back to the canonical DB (or
+    any other layer) would mask a typo in the given path. Still a subclass of
+    ``DatabaseNotFoundError`` so existing ``except DatabaseNotFoundError`` call
+    sites keep working without changes.
+    """
+
+    def __init__(self, path: Path, source: str):
+        self.path = path
+        self.source = source
+        message = (
+            f"Database path does not exist: {path}\n"
+            f"(source: {source})\n"
+            "\n"
+            "This path was given explicitly, so rebalance will not silently fall\n"
+            "back to another database location — that would risk masking a typo.\n"
+            "\n"
+            "Fix one of these:\n"
+            f"  1. Check the path for typos: {path}\n"
+            "  2. Create a database there first, e.g.:\n"
+            f"       rebalance onboard --database {path}\n"
+            "  3. Drop --database (and unset REBALANCE_DB if set) to use the\n"
+            "     default resolution chain instead\n"
+        )
+        # Deliberately bypass DatabaseNotFoundError.__init__ (which expects a
+        # `candidates` list and renders the generic multi-layer help message) —
+        # this subclass carries its own single-path, single-source message.
+        FileNotFoundError.__init__(self, message)
+        self.candidates = [(path, source)]
+
+
 def resolve_database_path(explicit: Path | None = None) -> Path:
     """Resolve the rebalance.db path via the layered chain documented above.
 
     Returns an existing absolute path, or raises ``DatabaseNotFoundError``
     with a message naming every layer that was tried.
+
+    GH-201: when ``explicit`` is given (e.g. via ``--database`` or the
+    ``REBALANCE_DB`` env var, which Typer's ``DBOption`` also feeds into this
+    parameter), it must exist. A nonexistent explicit path raises
+    :class:`ExplicitDatabasePathNotFoundError` immediately instead of silently
+    falling through to the canonical DB or any other layer — that fallback
+    used to mask typos in operator-supplied paths.
     """
     candidates: list[tuple[Path, str]] = []
 
     if explicit is not None:
-        candidates.append((Path(explicit).expanduser().resolve(), "--database flag"))
+        explicit_path = Path(explicit).expanduser().resolve()
+        explicit_source = "--database flag"
+        if not explicit_path.exists():
+            raise ExplicitDatabasePathNotFoundError(explicit_path, explicit_source)
+        candidates.append((explicit_path, explicit_source))
 
     env_value = os.environ.get("REBALANCE_DB")
     if env_value:

@@ -38,7 +38,8 @@ from rebalance.ingest.calendar_helpers import calendar_dt_utc, normalize_aware_u
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.slack_users import compact_sleuth_reminder
-from rebalance.tz_utils import local_tz, parse_utc_iso
+from rebalance.tz_utils import format_local, local_tz, parse_utc_iso
+from rebalance.lib.time_ops import _parse_iso
 
 
 # Author logins of known cloud-agent bots. Mirrors agent_tags.py — kept here
@@ -51,6 +52,49 @@ CLOUD_AGENT_AUTHORS: tuple[str, ...] = (
     "claude[bot]",
     "claude-bot[bot]",
 )
+
+
+class PulseReconcileError(RuntimeError):
+    """The pulse export mirror could not be reconciled with origin (GH-152)."""
+
+
+def reconcile_pulse_mirror(target_path: Path) -> None:
+    """Fetch origin and rebase the local pulse mirror onto it.
+
+    Keeps the dashboard-read mirror fresh without discarding local pulse-write
+    commits (rebase replays them onto origin). Without this, ``pulse_sync`` only
+    writes/commits/pushes and never pulls, so the mirror freezes and every
+    freshness signal read from it reports live collectors as stale (GH-152).
+
+    Raises ``PulseReconcileError`` on any failure so the caller can surface it
+    loudly — never a silent "fresh" state. The caller decides whether that is
+    fatal; a reconcile failure does not corrupt the working tree (a failed
+    rebase is aborted here before raising).
+    """
+    git_dir = target_path / ".git"
+    if not git_dir.exists():
+        raise PulseReconcileError(f"pulse_target_path is not a git repo: {target_path}")
+    # Defer to an operator's in-progress rebase rather than trampling it.
+    if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+        raise PulseReconcileError(
+            f"a git rebase is already in progress in {target_path}; deferring to operator"
+        )
+    proc = subprocess.run(
+        ["git", "pull", "--rebase"],
+        cwd=str(target_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # Restore the repo so a conflicted rebase does not linger for the next run.
+        subprocess.run(
+            ["git", "rebase", "--abort"], cwd=str(target_path), capture_output=True
+        )
+        detail = (proc.stderr or proc.stdout).strip()
+        raise PulseReconcileError(
+            f"git pull --rebase failed (code {proc.returncode}) in {target_path}: {detail}"
+        )
 
 
 def _author_filter_sql(column: str) -> str:
@@ -82,8 +126,19 @@ def _local_day_bounds(tz: ZoneInfo, now: datetime | None = None) -> tuple[dateti
     return yesterday_start, today_start, tomorrow_start
 
 
-def _parse_iso(value: str | None) -> datetime | None:
-    return parse_utc_iso(value)
+def _table_exists(conn: Any, name: str) -> bool:
+    """True if *name* is a table in the connected DB.
+
+    ``_query_day_activity`` runs on a plain connection whose schema is not
+    guaranteed migrated (e.g. a partial-schema fixture, or a DB predating a
+    source's table). Optional sources gate their SELECT on this so an absent
+    table degrades to "no rows" instead of raising and aborting the whole snapshot.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (name,),
+    ).fetchone()
+    return row is not None
 
 
 def _in_window(value: str | None, start: datetime, end: datetime) -> bool:
@@ -112,6 +167,8 @@ class DayActivity:
     gh_items: list[dict[str, Any]] = field(default_factory=list)
     gh_comments: list[dict[str, Any]] = field(default_factory=list)
     sleuth_activity: list[dict[str, Any]] = field(default_factory=list)
+    email_activity: list[dict[str, Any]] = field(default_factory=list)
+    figma_activity: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -192,6 +249,46 @@ def _query_day_activity(
                 "html_url": r["html_url"] or "",
                 "author_login": r["author_login"] or "",
                 "source_tag": tag,
+                "source_kind": "pull_request",
+            })
+
+    # Direct branch commits are a distinct raw source. The anti-join means a
+    # later-discovered PR commit replaces the visible signal without deleting
+    # the direct-push receipt/provenance.
+    direct_filter = _author_filter_sql("d.author_login")
+    rows = conn.execute(
+        f"""
+        SELECT d.repo_full_name, d.sha, d.message, d.committed_at, d.html_url,
+               d.author_login, d.ref,
+               (SELECT GROUP_CONCAT(path, char(10))
+                  FROM github_direct_commit_files f
+                 WHERE f.repo_full_name = d.repo_full_name AND f.sha = d.sha) AS paths
+        FROM github_direct_commits d
+        WHERE d.committed_at >= ?
+          AND {direct_filter}
+          AND NOT EXISTS (
+              SELECT 1 FROM github_commits p
+              WHERE p.repo_full_name = d.repo_full_name AND p.sha = d.sha
+          )
+        ORDER BY d.committed_at DESC
+        """,
+        (sql_floor, github_login, *CLOUD_AGENT_AUTHORS),
+    ).fetchall()
+    for r in rows:
+        if _in_window(r["committed_at"], start, end):
+            message = r["message"] or ""
+            activity.gh_commits.append({
+                "repo": r["repo_full_name"],
+                "sha": r["sha"][:7] if r["sha"] else "",
+                "subject": message.splitlines()[0][:160] if message else "direct commit",
+                "committed_at": r["committed_at"],
+                "html_url": r["html_url"] or "",
+                "author_login": r["author_login"] or "",
+                "paths": (r["paths"] or "").splitlines(),
+                "source_tag": classify_source(
+                    branch=r["ref"], author_login=r["author_login"], commit_message=message,
+                ),
+                "source_kind": "direct_push",
             })
 
     item_filter = _author_filter_sql("author_login")
@@ -269,7 +366,7 @@ def _query_day_activity(
                 "source_tag": tag,
             })
 
-    if slack_user_id:
+    if slack_user_id and _table_exists(conn, "sleuth_reminders"):
         rows = conn.execute(
             """
             SELECT reminder_id, state, is_active, reminder_message_text,
@@ -309,6 +406,55 @@ def _query_day_activity(
                         if r["assignee_id"] == slack_user_id
                         else "assigned_by_me"
                     ),
+                })
+
+    # Email — Gmail-synced messages received in the window. Mirrors the sleuth
+    # block: SQL prefilter on the UTC floor, then a tz-aware [start, end) refine.
+    # ponytail: `snippet` (message body preview) is deliberately NOT selected. The
+    # candidate arm ranks on subject + sender, so the body would be dead weight —
+    # and it is the one field here that carries message CONTENT, which the ranker
+    # forwards to a cloud model. Not collected until a consumer actually needs it.
+    if _table_exists(conn, "email_messages"):
+        rows = conn.execute(
+            """
+            SELECT message_id, from_name, from_address, subject, received_at
+            FROM email_messages
+            WHERE received_at >= ?
+            ORDER BY received_at DESC
+            """,
+            (sql_floor,),
+        ).fetchall()
+        for r in rows:
+            if _in_window(r["received_at"], start, end):
+                activity.email_activity.append({
+                    "message_id": r["message_id"],
+                    "from_name": r["from_name"] or "",
+                    "from_address": r["from_address"] or "",
+                    "subject": (r["subject"] or "").replace("\r", " ").strip()[:200],
+                    "received_at": r["received_at"],
+                })
+
+    # Figma — UNRESOLVED comments created in the window (resolved_at IS NULL).
+    # Legitimately empty on the operator's machine until a figma_file_keys
+    # allow-list is configured; the collector is opt-in.
+    if _table_exists(conn, "figma_comments"):
+        rows = conn.execute(
+            """
+            SELECT comment_key, file_key, message, user_handle, created_at
+            FROM figma_comments
+            WHERE created_at >= ? AND resolved_at IS NULL
+            ORDER BY created_at DESC
+            """,
+            (sql_floor,),
+        ).fetchall()
+        for r in rows:
+            if _in_window(r["created_at"], start, end):
+                activity.figma_activity.append({
+                    "comment_key": r["comment_key"],
+                    "file_key": r["file_key"],
+                    "message": (r["message"] or "").replace("\r", " ").strip()[:200],
+                    "user_handle": r["user_handle"] or "",
+                    "created_at": r["created_at"],
                 })
 
     return activity
@@ -642,15 +788,8 @@ def _tag_summary(counts: dict[str, int]) -> str:
 
 
 def _fmt_local(dt_value: str | None, tz: ZoneInfo, *, time_only: bool = False) -> str:
-    parsed = _parse_iso(dt_value)
-    if parsed is None:
-        return ""
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    local = parsed.astimezone(tz)
-    if time_only:
-        return local.strftime("%-I:%M %p")
-    return local.strftime("%b %-d %-I:%M %p")
+    fmt = "%-I:%M %p" if time_only else "%b %-d %-I:%M %p"
+    return format_local(dt_value, fmt, tz=tz)
 
 
 def _render_section_today_work(today: DayActivity, tz: ZoneInfo) -> str:
@@ -750,12 +889,13 @@ def _render_section_calendar(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
         return "_No upcoming meetings today._"
     lines: list[str] = []
     for e in events[:15]:
-        when = e["_start_dt"].astimezone(tz).strftime("%-I:%M %p")
+        when = format_local(e["_start_dt"], "%-I:%M %p", tz=tz)
         end_dt = e.get("_end_dt")
         end_part = ""
         if end_dt:
             try:
-                end_part = f"–{end_dt.astimezone(tz).strftime('%-I:%M %p')}"
+                end_str = format_local(end_dt, "%-I:%M %p", tz=tz)
+                end_part = f"–{end_str}" if end_str else ""
             except Exception:
                 end_part = ""
         loc = f" @ {e['location']}" if e.get("location") else ""
@@ -1008,8 +1148,26 @@ def _push_repair_actions(target_repo: Path) -> dict[str, Any]:
 
 
 def _verify_remote_content(target_repo: Path, file_rel: str, expected: str) -> bool:
-    """Return True if origin/HEAD now contains exactly the expected file content."""
-    rc, out, _ = _run_git(["show", f"origin/HEAD:{file_rel}"], cwd=target_repo)
+    """Return True if the branch just pushed now contains exactly the expected file content.
+
+    GH-233: this used to read ``origin/HEAD``, which is the remote's *default* branch — not
+    necessarily the branch ``git push`` just wrote to. Two ways that went wrong:
+
+    * **Wrong ref.** ``_commit_and_push_if_changed`` runs a bare ``git push``, which pushes the
+      current branch to its upstream. On any branch other than the remote default, the check read
+      a different branch than the one that was written — reporting a mismatch for a good push, or
+      passing because some other branch happened to match.
+    * **Missing ref.** ``origin/HEAD`` is created at clone time from the remote's HEAD. A clone of
+      an empty remote never gets one, and pushing afterwards does not create it, so
+      ``git show origin/HEAD:<path>`` fails with "invalid object name" however correct the push was.
+
+    ``@{u}`` is by definition the ref the bare push targeted, so resolving it removes both cases.
+    A missing upstream is still a genuine failure: without one there is nothing to have pushed to.
+    """
+    rc, upstream, _ = _run_git(["rev-parse", "--abbrev-ref", "@{u}"], cwd=target_repo)
+    if rc != 0 or not upstream:
+        return False
+    rc, out, _ = _run_git(["show", f"{upstream}:{file_rel}"], cwd=target_repo)
     return rc == 0 and out == expected.strip()
 
 

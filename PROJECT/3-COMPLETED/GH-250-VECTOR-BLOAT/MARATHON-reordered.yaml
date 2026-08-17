@@ -1,0 +1,77 @@
+# REORDERED (2026-08-05): vb4 -> vb5 -> vb3, because vb3 CANNOT converge before the other two.
+# vb3 escalated twice on round-cap (5, then 9) while codex kept -- correctly -- demanding that the
+# runbook cite the REAL fence/reclaim commands and their real success evidence. It references
+# utils/gh250/fence-writers.sh 8 times and that directory does not exist yet. Raising the cap was
+# treating the symptom; the dependency was backwards in the original plan. The runbook is the
+# LAST artifact, not the first -- it documents scripts that must already exist.
+#
+# MARATHON.yaml — GH-250 vector-bloat remediation, autonomous subset
+#
+# Scope decision (read before firing): this plan deliberately does NOT contain R1, R4, or R5
+# from GH-250. See SCOPE.md in this directory for the reasoning. In short:
+#   R1  is time-gated on >=3 real github_sync cycles (~4h wall clock) — a marathon phase can
+#       only sleep or falsely pass; neither is a check.
+#   R4  is an irreversible DELETE + VACUUM against a 13.4 GB production database.
+#   R5  depends on R4 and is a multi-hour MLX embedding run that itself trips the very memory
+#       ceiling under investigation.
+# What IS here: the efficiency fix (R7), the prevention invariant (R6), and full readiness for
+# R4 — runbook, fencing procedure, and a rehearsal proven against a throwaway COPY of the db.
+#
+# Fire with (dry-run FIRST, always):
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/MARATHON.yaml \
+#     --pre-advance-cmd "/Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q" \
+#     --dry-run
+#
+# The gate MUST name an ABSOLUTE interpreter. Bare `python` passed only because the operator's
+# interactive shell had a venv active; the marathon's turn context does not inherit it, so the gate
+# failed with exit 5 / reason=pre-advance-failed on 2026-08-04. In a sanitized env `python` is not
+# even on PATH, and homebrew python3 cannot import `rebalance`.
+#
+# The pre-advance gate is SCOPED, not the full suite, on purpose: GH-231 (job_guard fixture never
+# pins the compressor ceiling) and GH-232 (5 tests that only fail outside CI) both fail on this
+# machine for reasons unrelated to this work. A full-suite gate would halt the chain on a
+# pre-existing flake. Widen it once those two are closed.
+
+# Phase ids are vb1..vb5, NOT p1..p5, deliberately (learned the hard way 2026-08-04):
+# the tick token id is derived as MARATHON-<UPPER(id)>-TURN and the ledger is SHARED across every
+# marathon in this clone. A prior GH-195 marathon already owns MARATHON-P1-TURN and
+# MARATHON-P2-TURN, so a plan using p1/p2 halts immediately with
+#   "relay task MARATHON-P1-TURN is open but reserved for unexpected agent 'claude'"
+# Phase ids must be globally unique per clone, not merely unique within a plan.
+#
+# RESUME plan (2nd) — vb1 AND vb2 both APPROVED on 2026-08-05; both absent so a re-fire
+# cannot redo them. vb3 drops its depends_on for the same reason. Original note follows.
+# RESUME plan — vb1 was APPROVED on 2026-08-05 (4 turns, codex approved, gate passed) and is
+# deliberately absent so a re-fire cannot redo it. marathon.sh has no --from/--skip flag, so a
+# reduced plan is how you resume a partially-completed chain. vb2 drops its depends_on for the
+# same reason. The full plan stays in MARATHON.yaml as the record.
+#
+name: gh250-vb-reordered
+phases:
+  - id: vb4
+    name: R3 — writer-fencing script with guaranteed restore
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p4-writer-fencing.md
+    artifact: utils/gh250/fence-writers.sh,tests/test_gh250_fencing.py
+    turn_timeout_s: 900
+    max_review_rounds: 3
+
+  - id: vb5
+    name: Rehearse the reclaim against a throwaway COPY — never the live db
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p5-reclaim-rehearsal.md
+    artifact: utils/gh250/reclaim.py,utils/gh250/rehearse.sh,tests/test_gh250_reclaim.py
+    turn_timeout_s: 1800
+    max_review_rounds: 4
+    depends_on: vb4
+
+  - id: vb3
+    name: R2 — author the reclaim runbook
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p3-reclaim-runbook.md
+    artifact: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md
+    turn_timeout_s: 900
+    max_review_rounds: 4
+    depends_on: vb5
+

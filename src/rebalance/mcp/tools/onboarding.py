@@ -166,10 +166,22 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         from rebalance.ingest.gmail import push_email_messages
 
         result = push_email_messages(database_path, messages)
-        return {
+        out = {
             "messages_listed": result.messages_listed,
             "messages_stored": result.messages_stored,
             "messages_inserted": result.messages_inserted,
             "messages_updated": result.messages_updated,
+            "messages_skipped": result.messages_skipped,
             "semantic_pending": True,
         }
+        if result.messages_skipped:
+            # Loud, actionable, in the tool's own response — the caller IS an agent,
+            # so tell it directly rather than only writing a log line it will never read.
+            out["warning"] = (
+                f"{result.messages_skipped} of {result.messages_listed} message(s) were "
+                "REJECTED for carrying no sender, no subject and no received_at. This "
+                "almost always means your payload uses different key names. Expected: "
+                "message_id, thread_id, from_address, from_name, subject, snippet, "
+                "received_at, labels."
+            )
+        return out

@@ -1,0 +1,164 @@
+{
+  "name": "sidebar-markdown",
+  "displayName": "Sidebar Markdown",
+  "description": "Show any markdown file in its own activity bar view, in every VS Code window.",
+  "version": "0.2.1",
+  "publisher": "matthew-taylor",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sidebarMarkdown",
+          "title": "Markdown",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sidebarMarkdown": [
+        {
+          "type": "webview",
+          "id": "sidebarMarkdown.view",
+          "name": "Markdown"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Sidebar Markdown",
+      "properties": {
+        "sidebarMarkdown.file": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Absolute path to the markdown file shown in the Sidebar Markdown view. Applies to every open window (user setting only)."
+        },
+        "sidebarMarkdown.style": {
+          "type": "string",
+          "enum": [
+            "theme",
+            "clio"
+          ],
+          "enumDescriptions": [
+            "Match the current VS Code color theme.",
+            "Cream card style approximating the CLIO macOS app."
+          ],
+          "default": "theme",
+          "scope": "application",
+          "description": "Visual style for the rendered markdown."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "sidebarMarkdown.chooseFile",
+        "title": "Choose Markdown File…",
+        "category": "Sidebar Markdown"
+      },
+      {
+        "command": "sidebarMarkdown.refresh",
+        "title": "Refresh",
+        "category": "Sidebar Markdown",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sidebarMarkdown.showSource",
+        "title": "Show Source",
+        "category": "Sidebar Markdown",
+        "icon": "$(code)"
+      },
+      {
+        "command": "sidebarMarkdown.showRendered",
+        "title": "Show Rendered",
+        "category": "Sidebar Markdown",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "sidebarMarkdown.openInEditor",
+        "title": "Open in Editor",
+        "category": "Sidebar Markdown",
+        "icon": "$(go-to-file)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "sidebarMarkdown.showSource",
+          "when": "view == sidebarMarkdown.view && sidebarMarkdown.mode == rendered",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sidebarMarkdown.showRendered",
+          "when": "view == sidebarMarkdown.view && sidebarMarkdown.mode == source",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sidebarMarkdown.openInEditor",
+          "when": "view == sidebarMarkdown.view",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sidebarMarkdown.refresh",
+          "when": "view == sidebarMarkdown.view",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sidebarMarkdown.chooseFile",
+          "when": "view == sidebarMarkdown.view",
+          "group": "1_configure"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sidebarMarkdown.showSource",
+          "when": "false"
+        },
+        {
+          "command": "sidebarMarkdown.showRendered",
+          "when": "false"
+        },
+        {
+          "command": "sidebarMarkdown.refresh",
+          "when": "false"
+        },
+        {
+          "command": "sidebarMarkdown.openInEditor",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "lint": "eslint .",
+    "build:test": "esbuild test/*.test.ts --bundle --platform=node --format=cjs --outdir=out-test --external:vscode",
+    "test": "npm run build:test && node --test out-test/*.test.js",
+    "esbuild": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "build": "npm run check && npm run esbuild -- --sourcemap",
+    "build:prod": "npm run check && npm run esbuild -- --minify",
+    "watch": "npm run esbuild -- --sourcemap --watch",
+    "package": "npm run build:prod && vsce package"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^24.13.3",
+    "@types/vscode": "1.125.0",
+    "@vscode/vsce": "^3.3.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.8.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.65.0"
+  }
+}

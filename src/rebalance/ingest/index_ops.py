@@ -10,9 +10,10 @@ underlying ingest pipelines so callers do not have to know the order of
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -70,6 +71,16 @@ class Collector:
         ``backfill_semantic_documents`` iterates it instead of an if-ladder
         branch. ``None`` (default) preserves the legacy vault/github/email/code
         ladder unchanged.
+    candidates:
+        Optional registry-driven provider that yields deterministic
+        next-action candidate dicts (each carrying ``rank_key``, ``source``,
+        non-empty ``evidence``, and ``why``) from a day bundle. This is the
+        SECOND use of the same registry seam as ``semantic_docs``:
+        ``next_actions._operator_candidates`` walks the registry and calls each
+        provider instead of hand-dispatching per source, so a new work signal
+        reaches the ranked verdict by registering a collector — never by editing
+        the ranker's dispatch chain (GUIDING-PRINCIPLES Principle 3). ``None``
+        (default) means the source contributes no next-action candidates.
     """
 
     name: str
@@ -78,6 +89,7 @@ class Collector:
     included_in_all: bool = True
     kind: str = "raw_source"
     semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
+    candidates: Callable[[Any], Iterable[dict[str, Any]]] | None = None
 
 
 # A Collector that also exposes a ``semantic_docs`` provider is the spine of a
@@ -179,6 +191,280 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return None
 
 
+# GH-166: how far behind the vault writer the ingester is allowed to drift
+# before signal_health.vault trips, in minutes. com.rebalance-os.vault-sync
+# runs hourly (:15 past the hour); a healthy install clears any edit within
+# that same run, well under the 60-minute cadence. 2x cadence (missed one
+# full cycle) warns; 3x cadence (missed two) degrades. Both are still far
+# tighter than the old 7-day freshness window, which never caught the
+# ~51-90 minute drift this fixes (#166).
+_VAULT_INGEST_LAG_WARN_MINUTES = 120
+_VAULT_INGEST_LAG_DEGRADED_MINUTES = 180
+
+# GH-166: a semantic_documents row still pending embed past this many minutes
+# is flagged "stuck" rather than counted as an in-flight run's normal tail.
+# See the comment at the pending-embed drift computation in get_index_status
+# for why 30 minutes is well past a healthy run's expected completion time.
+_PENDING_EMBED_STUCK_MINUTES = 30
+
+_SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
+    "vault": {
+        "freshness_key": "last_ingested_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+        # GH-166: a fresh last_ingested_at only proves *some* ingest ran
+        # recently — it says nothing about whether the writer has since
+        # moved further ahead. lag_key names a computed field on the
+        # source payload (last_modified_in_vault - last_ingested_at) that
+        # this rule's warn/degraded minutes are checked against below.
+        "lag_key": "ingest_lag_minutes",
+        "lag_warn_minutes": _VAULT_INGEST_LAG_WARN_MINUTES,
+        "lag_degraded_minutes": _VAULT_INGEST_LAG_DEGRADED_MINUTES,
+    },
+    "github": {
+        "freshness_key": "activity_last_scanned_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+        # GH-127 content-quality check. github_activity (the table
+        # recent_row_count_7d windows above) is a pure per-day counters
+        # rollup with no per-item content, so the predicate targets
+        # github_items instead — windowed on fetched_at (the collector's own
+        # sync timestamp, mirroring how recent_row_count_7d windows
+        # github_activity on scanned_at) rather than the item's own
+        # created_at/updated_at, so a burst of newly-synced-but-empty items
+        # is caught the same run they land.
+        "content_predicate": "title IS NOT NULL AND TRIM(title) != ''",
+        "content_table": "github_items",
+        "content_window_column": "fetched_at",
+        "content_label": "a title",
+    },
+    "calendar": {"freshness_key": "last_fetched_at", "window_days": 7, "zero_status": "degraded"},
+    "sleuth": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "warn"},
+    "apple_reminders": {
+        "freshness_key": "last_synced_at",
+        "window_days": 7,
+        "zero_status": "warn",
+    },
+    "email": {
+        "freshness_key": "last_synced_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+        # GH-145 / GH-141: this source is narrowed by an operator-configured
+        # Gmail query. When the collector runs successfully and that query
+        # matches nothing, zero rows is the CONFIGURED outcome, not a failure —
+        # so a quiet window reports `ok` and names the filter instead of
+        # applying zero_status. Freshness is already known-current at the point
+        # this is consulted, which is what proves the collector actually ran;
+        # a stale or missing timestamp is still caught above and still degrades.
+        #
+        # Without this, the live filter `in:inbox is:starred is:important` (a
+        # three-way AND matching ~1-3 messages a month) marked email degraded
+        # permanently by design, and contradicted doctor's own `email data`
+        # check in the same output.
+        #
+        # Declarative: any other filtered source adds this key. No new branch.
+        "quiet_filter": "describe_gmail_query_filter",
+        # GH-127 content-quality check — the exact defect that hid 119/124
+        # dead rows for 3 weeks (#125). Same table + window email already
+        # uses for recent_row_count_7d (email_messages / received_at).
+        "content_predicate": (
+            "(from_address IS NOT NULL AND TRIM(from_address) != '') "
+            "OR (subject IS NOT NULL AND TRIM(subject) != '')"
+        ),
+        "content_table": "email_messages",
+        "content_window_column": "received_at",
+        "content_label": "a sender or subject",
+    },
+    "figma": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "warn"},
+    "ask_self": {"freshness_key": "last_scanned_at", "window_days": 7, "zero_status": "warn"},
+}
+
+_SIGNAL_HEALTH_TOTAL_KEYS: dict[str, tuple[str, ...]] = {
+    "vault": ("files", "chunks"),
+    "github": ("activity_records", "items", "documents"),
+    "calendar": ("events",),
+    "sleuth": ("reminders",),
+    "apple_reminders": ("reminders",),
+    "email": ("messages",),
+    "figma": ("comments",),
+    "ask_self": ("repos",),
+}
+
+
+def _parse_status_timestamp(raw: Any) -> datetime | None:
+    from rebalance.lib.time_ops import _parse_iso as common_parse_iso
+    return common_parse_iso(raw, force_utc=True)
+
+
+def _vault_ingest_lag_minutes(last_modified_in_vault: Any, last_ingested_at: Any) -> float | None:
+    """Minutes the ingester is behind the vault writer, clamped to >= 0.
+
+    None when either timestamp is missing or unparseable — the caller
+    already surfaces a missing-timestamp verdict via the freshness check,
+    so this stays silent rather than inventing a number.
+    """
+    modified = _parse_status_timestamp(last_modified_in_vault)
+    ingested = _parse_status_timestamp(last_ingested_at)
+    if modified is None or ingested is None:
+        return None
+    lag = (modified - ingested).total_seconds() / 60
+    return max(0.0, lag)
+
+
+def _minutes_since(raw_timestamp: Any, now: datetime) -> float | None:
+    """Minutes between *now* and *raw_timestamp*, or None if unparseable."""
+    ts = _parse_status_timestamp(raw_timestamp)
+    if ts is None:
+        return None
+    return (now - ts).total_seconds() / 60
+
+
+def _source_total_rows(source_name: str, source_payload: dict[str, Any]) -> int:
+    for key in _SIGNAL_HEALTH_TOTAL_KEYS.get(source_name, ()):
+        value = source_payload.get(key)
+        if isinstance(value, int):
+            return value
+    return 0
+
+
+def _quiet_filter_description(rule: dict[str, Any]) -> str | None:
+    """Describe *rule*'s configured narrowing filter, or None if it declares none.
+
+    GH-145. The rule names a formatter in ``rebalance.ingest.config`` rather than
+    embedding a filter string, so the filter has exactly one home and no health
+    surface can drift from it. A source with no ``quiet_filter`` key is
+    unaffected, and a formatter that fails is treated as "no filter declared" —
+    a health check must never crash the status it is reporting on.
+    """
+    name = rule.get("quiet_filter")
+    if not name:
+        return None
+    try:
+        from rebalance.ingest import config as _config  # noqa: PLC0415
+
+        formatter = getattr(_config, str(name), None)
+        if formatter is None:
+            return None
+        described = formatter()
+    except Exception:  # noqa: BLE001 — never let a description break the verdict
+        return None
+    described = str(described).strip()
+    return described or None
+
+
+def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
+    now = datetime.now(timezone.utc)
+    signal_health: dict[str, dict[str, str]] = {}
+
+    for source_name, rule in _SIGNAL_HEALTH_RULES.items():
+        source_payload = sources.get(source_name)
+        if not source_payload:
+            continue
+
+        recent_rows = int(source_payload.get("recent_row_count_7d") or 0)
+        total_rows = _source_total_rows(source_name, source_payload)
+        status_entry: dict[str, str] = {"status": "ok"}
+        freshness_value = _parse_status_timestamp(source_payload.get(rule["freshness_key"]))
+        stale_after = timedelta(days=int(rule["window_days"]))
+
+        if freshness_value is None:
+            if total_rows == 0:
+                status_entry = {"status": "warn", "reason": "no data has been observed yet"}
+            else:
+                status_entry = {
+                    "status": "degraded",
+                    "reason": f"freshness timestamp {rule['freshness_key']} is missing",
+                }
+        else:
+            age = now - freshness_value
+            if age > stale_after * 2:
+                status_entry = {
+                    "status": "degraded",
+                    "reason": f"last refresh advanced {age.days}d ago (window {rule['window_days']}d)",
+                }
+            elif age > stale_after:
+                status_entry = {
+                    "status": "warn",
+                    "reason": f"last refresh advanced {age.days}d ago (window {rule['window_days']}d)",
+                }
+            elif recent_rows == 0:
+                zero_status = str(rule["zero_status"])
+                quiet_filter = _quiet_filter_description(rule)
+                if total_rows == 0:
+                    status_entry = {
+                        "status": "warn",
+                        "reason": "freshness timestamp is current but the source has no rows yet",
+                    }
+                elif quiet_filter is not None:
+                    # GH-145 / GH-141: freshness is current, so the collector
+                    # ran. A narrowing filter that matched nothing is the
+                    # configured outcome, not silent data loss.
+                    status_entry = {
+                        "status": "ok",
+                        "reason": f"no rows matched in the last {rule['window_days']}d ({quiet_filter})",
+                    }
+                else:
+                    status_entry = {
+                        "status": zero_status,
+                        "reason": "freshness timestamp is current but 0 rows landed in the last 7d",
+                    }
+
+        # GH-166 ingest-lag override: last_ingested_at can be fresh (a sync
+        # ran recently) while the vault writer has still moved further
+        # ahead than the ingester has caught up to. Only overrides an
+        # otherwise-ok verdict — a source already flagged warn/degraded by
+        # freshness/zero-rows above keeps that verdict and reason, same
+        # precedence rule the content-quality override below follows.
+        lag_key = rule.get("lag_key")
+        if lag_key and status_entry["status"] == "ok":
+            lag_minutes = source_payload.get(lag_key)
+            if isinstance(lag_minutes, (int, float)):
+                degraded_after = rule.get("lag_degraded_minutes")
+                warn_after = rule.get("lag_warn_minutes")
+                if degraded_after is not None and lag_minutes > degraded_after:
+                    status_entry = {
+                        "status": "degraded",
+                        "reason": (
+                            f"ingest is {round(lag_minutes)}m behind the vault "
+                            f"writer (threshold {degraded_after}m)"
+                        ),
+                    }
+                elif warn_after is not None and lag_minutes > warn_after:
+                    status_entry = {
+                        "status": "warn",
+                        "reason": (
+                            f"ingest is {round(lag_minutes)}m behind the vault "
+                            f"writer (threshold {warn_after}m)"
+                        ),
+                    }
+
+        # GH-127 content-quality override: rows can be structurally valid
+        # (present, on-time) but semantically empty — no sender/subject on an
+        # email, no title on a github item. This is what let 119/124 dead
+        # email rows sit "ok" for 3 weeks (#125). Only sources with a
+        # content_predicate in the rule are checked (currently email +
+        # github); every other source's verdict is untouched by this block.
+        # Only overrides an otherwise-`ok` verdict — a source already flagged
+        # warn/degraded by freshness keeps that verdict and reason.
+        content_predicate = rule.get("content_predicate")
+        if content_predicate and status_entry["status"] == "ok":
+            content_total = int(source_payload.get("content_total_count_7d") or 0)
+            content_fail = int(source_payload.get("content_fail_count_7d") or 0)
+            if content_total > 0:
+                fail_fraction = content_fail / content_total
+                if fail_fraction > 0.5:
+                    pct = round(fail_fraction * 100)
+                    label = rule.get("content_label", "meaningful content")
+                    status_entry = {
+                        "status": "degraded",
+                        "reason": f"{pct}% of recent rows lack {label}",
+                    }
+
+        signal_health[source_name] = status_entry
+
+    return signal_health
+
+
 def _apple_reminders_health_status(database_path: Path) -> str | None:
     """Cheap apple_reminders health status (ok | drift | never_synced) for the
     status payload. None if the probe itself fails — never crashes status."""
@@ -246,7 +532,18 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "chunks": _safe_count(conn, "chunks"),
             "last_ingested_at": _safe_max(conn, "vault_files", "ingested_at"),
             "last_modified_in_vault": _safe_max(conn, "vault_files", "last_modified"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "vault_files", "julianday(last_modified) >= julianday('now', '-7 days')"
+            ) or 0,
         }
+        # GH-166: how far the ingester is behind the vault writer, in minutes.
+        # Positive means the newest edit on disk hasn't been ingested yet;
+        # clamped at 0 so a normal ingest-after-edit ordering never reports a
+        # negative lag. None when either timestamp is missing/unparseable.
+        payload["sources"]["vault"]["ingest_lag_minutes"] = _vault_ingest_lag_minutes(
+            payload["sources"]["vault"]["last_modified_in_vault"],
+            payload["sources"]["vault"]["last_ingested_at"],
+        )
 
         payload["sources"]["github"] = {
             "items": _safe_count(conn, "github_items"),
@@ -255,17 +552,26 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "activity_last_scanned_at": _safe_max(conn, "github_activity", "scanned_at"),
             "documents_last_fetched_at": _safe_max(conn, "github_documents", "fetched_at"),
             "documents_last_updated_at": _safe_max(conn, "github_documents", "updated_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "github_activity", "julianday(scanned_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["calendar"] = {
             "events": _safe_count(conn, "calendar_events"),
             "last_fetched_at": _safe_max(conn, "calendar_events", "fetched_at"),
             "earliest_event_start": _safe_max(conn, "calendar_events", "start_time"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "calendar_events", "julianday(start_time) >= julianday('now', '-7 days') AND julianday(start_time) <= julianday('now', '+7 days')"
+            ) or 0,
         }
 
         payload["sources"]["sleuth"] = {
             "reminders": _safe_count(conn, "sleuth_reminders"),
             "last_synced_at": _safe_max(conn, "sleuth_reminders", "last_synced_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "sleuth_reminders", "julianday(created_on) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["apple_reminders"] = {
@@ -275,18 +581,27 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             ),
             "last_synced_at": _safe_max(conn, "apple_reminders", "last_synced_at"),
             "health": _apple_reminders_health_status(database_path),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "apple_reminders", "julianday(last_synced_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["email"] = {
             "messages": _safe_count(conn, "email_messages"),
             "last_synced_at": _safe_max(conn, "email_messages", "synced_at"),
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "email_messages", "julianday(received_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["figma"] = {
             "comments": _safe_count(conn, "figma_comments"),
             "last_synced_at": _safe_max(conn, "figma_comments", "synced_at"),
             "newest_comment_at": _safe_max(conn, "figma_comments", "created_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "figma_comments", "julianday(created_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         try:
@@ -299,7 +614,33 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "repos": _safe_count(conn, "ask_self_indexes"),
             "built_indexes": built,
             "last_scanned_at": _safe_max(conn, "ask_self_indexes", "scanned_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "ask_self_indexes", "julianday(scanned_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
+
+        # GH-127 content-quality check. Registry-driven off
+        # _SIGNAL_HEALTH_RULES: sources that declare a content_predicate get a
+        # materialized content_total_count_7d / content_fail_count_7d pair
+        # that _derive_signal_health reads generically. Adding a source's
+        # predicate is a dict-entry addition to the rules above — no new
+        # branch is needed here or in _derive_signal_health.
+        for source_name, rule in _SIGNAL_HEALTH_RULES.items():
+            predicate = rule.get("content_predicate")
+            content_table = rule.get("content_table")
+            window_column = rule.get("content_window_column")
+            if not predicate or not content_table or not window_column:
+                continue
+            source_payload = payload["sources"].get(source_name)
+            if source_payload is None:
+                continue
+            window_clause = f"julianday({window_column}) >= julianday('now', '-7 days')"
+            source_payload["content_total_count_7d"] = _safe_count_where(
+                conn, content_table, window_clause
+            ) or 0
+            source_payload["content_fail_count_7d"] = _safe_count_where(
+                conn, content_table, f"{window_clause} AND NOT ({predicate})"
+            ) or 0
 
         # Semantic index
         sem_total = _safe_count(conn, "semantic_documents")
@@ -359,30 +700,108 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             drift["vault_chunks_missing_from_semantic"] = None
 
         try:
-            gh_drift = conn.execute(
-                """
-                SELECT COUNT(*) FROM github_documents gd
-                LEFT JOIN semantic_documents sd
-                  ON sd.source_type = 'github' AND sd.source_pk = gd.source_key
-                WHERE sd.id IS NULL
-                """
-            ).fetchone()[0]
+            # GH-167: mirror the ignored-repo exclusion that
+            # ``github_documents_for_semantic()`` applies to the projection
+            # itself. Without this, a doc in an ignored repo is correctly never
+            # projected but still counts as "missing" here forever — a
+            # permanent false-positive drift reading, not a real gap.
+            from rebalance.ingest.config import get_github_ignored_repos
+
+            ignored_repos = sorted(get_github_ignored_repos())
+            if ignored_repos:
+                placeholders = ", ".join("?" for _ in ignored_repos)
+                gh_drift = conn.execute(
+                    f"""
+                    SELECT COUNT(*) FROM github_documents gd
+                    LEFT JOIN semantic_documents sd
+                      ON sd.source_type = 'github' AND sd.source_pk = gd.source_key
+                    WHERE sd.id IS NULL
+                      AND LOWER(gd.repo_full_name) NOT IN ({placeholders})
+                    """,
+                    ignored_repos,
+                ).fetchone()[0]
+            else:
+                gh_drift = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM github_documents gd
+                    LEFT JOIN semantic_documents sd
+                      ON sd.source_type = 'github' AND sd.source_pk = gd.source_key
+                    WHERE sd.id IS NULL
+                    """
+                ).fetchone()[0]
             drift["github_documents_missing_from_semantic"] = int(gh_drift)
         except Exception:
             drift["github_documents_missing_from_semantic"] = None
 
         try:
-            pending_embed = conn.execute(
+            pending_rows = conn.execute(
                 """
-                SELECT COUNT(*) FROM semantic_documents
+                SELECT updated_at FROM semantic_documents
                 WHERE embedded_hash IS NULL OR embedded_hash != content_hash
                 """
-            ).fetchone()[0]
-            drift["semantic_documents_pending_embed"] = int(pending_embed)
+            ).fetchall()
+            pending_total = len(pending_rows)
+            now = datetime.now(timezone.utc)
+            oldest_minutes: float | None = None
+            stuck_count = 0
+            for row in pending_rows:
+                age_minutes = _minutes_since(row["updated_at"], now)
+                if age_minutes is None:
+                    continue
+                if oldest_minutes is None or age_minutes > oldest_minutes:
+                    oldest_minutes = age_minutes
+                if age_minutes > _PENDING_EMBED_STUCK_MINUTES:
+                    stuck_count += 1
+
+            drift["semantic_documents_pending_embed"] = pending_total
+            # GH-166: embed_chunks() runs synchronously right after ingest_vault()
+            # within the same refresh job (see _refresh_vault below), so a
+            # pending-embed row should clear within that one run — well under
+            # the ~60-minute vault-sync cadence. A row still pending past
+            # _PENDING_EMBED_STUCK_MINUTES is not an in-flight run's normal
+            # tail; it is evidence the embed step stalled or failed on that row.
+            drift["semantic_documents_pending_embed_stuck"] = stuck_count
+            drift["semantic_documents_pending_embed_oldest_minutes"] = (
+                round(oldest_minutes, 1) if oldest_minutes is not None else None
+            )
+            if stuck_count:
+                drift["semantic_documents_pending_embed_reason"] = (
+                    f"{stuck_count} of {pending_total} pending-embed row(s) unembedded "
+                    f"for over {_PENDING_EMBED_STUCK_MINUTES}m (oldest "
+                    f"{round(oldest_minutes, 1) if oldest_minutes is not None else '?'}m) "
+                    "— likely a stuck/failed embed run, not just an in-flight tail"
+                )
         except Exception:
             drift["semantic_documents_pending_embed"] = None
+            drift["semantic_documents_pending_embed_stuck"] = None
+            drift["semantic_documents_pending_embed_oldest_minutes"] = None
 
-        payload["freshness"] = drift
+        # GH-169 Phase 3: commit-corpus completeness, anchored on the remote.
+        # Cheap (local git + one ls-remote per repo, no REST API) so it can run
+        # on every status call. Reported as three separate quantities that are
+        # never summed — a phantom must not cancel a real gap.
+        try:
+            from rebalance.ingest.github_coverage import check_coverage, coverage_health
+
+            repos = _resolve_repos_for_refresh(database_path, None)
+            report = check_coverage(database_path, repos)
+            drift["commit_coverage"] = {
+                "checked_at": report.checked_at,
+                "repos_checked": len(report.repos),
+                "collection_gap": sum(r.collection_gap for r in report.repos),
+                "projection_gap": sum(r.projection_gap for r in report.repos),
+                "orphan_count": sum(r.orphan_count for r in report.repos),
+                "incomplete": sum(r.incomplete for r in report.repos),
+                "uncoverable": [
+                    r.repo for r in report.repos if r.state == "uncoverable"
+                ],
+                "stale": [r.repo for r in report.repos if r.state == "stale"],
+                "health": coverage_health(report),
+            }
+        except Exception as exc:  # never let a coverage probe break status
+            drift["commit_coverage"] = {"error": str(exc)}
+
+        payload["freshness"] = {**drift, "signal_health": _derive_signal_health(payload["sources"])}
 
     return payload
 
@@ -602,6 +1021,7 @@ def _refresh_github(
     since_days: int,
     repos: list[str],
     dry_run: bool,
+    backfill_since: str | None = None,
 ) -> dict[str, Any]:
     initial_target_repos = _resolve_repos_for_refresh(database_path, repos)
     external_count = len(
@@ -610,6 +1030,8 @@ def _refresh_github(
     plan_steps = [
         "sync_pushed_repos()",
         f"github_scan(days={since_days})",
+        "capture_direct_commits(events, watched_repos, cap=5/20)",
+        "backfill_repos(local git walk, 0 API calls)",
         f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
         f"reconcile_watched_repo() x {external_count} external repos (rollup or purge)",
         "embed_github_documents()",
@@ -630,6 +1052,11 @@ def _refresh_github(
     )
     from rebalance.ingest.config import get_github_ignored_repos
     from rebalance.ingest.github_knowledge import sync_github_repo
+    from rebalance.ingest.github_direct_commits import (
+        capture_direct_commits,
+        sync_direct_commit_documents,
+    )
+    from rebalance.ingest.github_commit_backfill import backfill_repos
 
     # Auto-discovery: fetch /user/repos?sort=pushed and upsert into
     # github_pushed_repos BEFORE resolving target repos, so newly-pushed
@@ -640,6 +1067,18 @@ def _refresh_github(
     scan_result = scan_github(token=token, days=since_days)
     skipped = filter_ignored_repo_activity(scan_result, get_github_ignored_repos())
     upsert_github_activity(database_path, scan_result)
+    direct_commits = capture_direct_commits(
+        database_path,
+        token=token,
+        events=scan_result.events,
+        watched_repos=target_repos,
+    )
+    # GH-169: the Events API can only see ~300 events / ~90 days of one actor's
+    # feed, so it is an accelerator, not a completeness guarantee. The local-git
+    # walk is the correctness backstop and runs after it — the ratchet in
+    # upsert_direct_commit() means neither path can undo the other's work.
+    # Zero API calls, so it adds no rate-limit pressure to the refresh.
+    backfill_results = backfill_repos(database_path, target_repos, since=backfill_since)
 
     repo_results: list[dict[str, Any]] = []
     for repo in target_repos:
@@ -685,12 +1124,60 @@ def _refresh_github(
         except Exception as e:  # noqa: BLE001 — one repo must not abort the run
             watched_activity.append({"repo": repo, "error": str(e)})
 
+    direct_documents = sync_direct_commit_documents(database_path)
+    # The GitHub raw source emits github_documents; semantic_index remains the
+    # sole writer of semantic_documents. Re-project each refreshed repo so a
+    # direct commit is queryable in the same run.
+    from rebalance.ingest.db import db_connection, ensure_github_schema
+    from rebalance.ingest.semantic_index import sync_github_documents
+
+    direct_semantic: dict[str, dict[str, int]] = {}
+    with db_connection(database_path, ensure_github_schema) as conn:
+        for repo in target_repos:
+            direct_semantic[repo] = sync_github_documents(conn, repo_full_name=repo)
+        conn.commit()
+
     from rebalance.ingest.github_knowledge import embed_github_documents
 
     gh_embed = embed_github_documents(database_path=database_path)
+
+    # Coverage guard: snapshot the resolved watched set and alarm on a silent
+    # reduction. Runs LAST, only on a clean sync (an earlier raise never reaches
+    # here), so a truncated mid-failure set can't record a false reduction. Never
+    # let the guard break a sync — observability must not reduce reliability.
+    try:
+        from rebalance.ingest.watchlist_guard import snapshot_and_detect
+
+        watchlist_guard = snapshot_and_detect(database_path)
+    except Exception as e:  # noqa: BLE001
+        watchlist_guard = {"error": str(e)}
+
+    # GH-124: commit-threshold auto-promotion. Immediately after the coverage
+    # guard (same "clean sync only, never break a sync" posture) so a repo that
+    # just crossed the operator-commit threshold graduates into project_registry
+    # on this same refresh rather than waiting for a future one.
+    try:
+        from rebalance.ingest.project_inference import sync_commit_threshold_promotions
+
+        auto_promote_summary = sync_commit_threshold_promotions(database_path)
+        auto_promote_result: dict[str, Any] = {
+            "enabled": auto_promote_summary.enabled,
+            "threshold": auto_promote_summary.threshold,
+            "candidates_evaluated": auto_promote_summary.candidates_evaluated,
+            "promoted_count": auto_promote_summary.promoted_count,
+            "promoted_repos": [
+                row["custom_fields"]["inference"]["repo_full_name"]
+                for row in auto_promote_summary.promoted
+            ],
+        }
+    except Exception as e:  # noqa: BLE001
+        auto_promote_result = {"error": str(e)}
+
     return {
         "scope": "github",
         "dry_run": False,
+        "watchlist_guard": watchlist_guard,
+        "auto_promote": auto_promote_result,
         "pushed_repos_sync": {
             "fetched": pushed_result.fetched,
             "inserted": pushed_result.inserted,
@@ -704,6 +1191,25 @@ def _refresh_github(
             "events": scan_result.total_events,
             "repos": len(scan_result.repo_activity),
             "skipped_ignored": len(skipped),
+        },
+        "direct_commit_capture": {
+            **direct_commits.as_dict(),
+            "documents_built": direct_documents,
+            "semantic_projection": direct_semantic,
+        },
+        "commit_backfill": {
+            "repos": len(backfill_results),
+            "inserted": sum(r.commits_inserted for r in backfill_results),
+            "updated": sum(r.commits_updated for r in backfill_results),
+            "merge_commits": sum(r.merge_commits for r in backfill_results),
+            "uncoverable": [
+                {"repo": r.repo, "reason": r.reason}
+                for r in backfill_results if r.state == "uncoverable"
+            ],
+            "warnings": [
+                {"repo": r.repo, "warning": w}
+                for r in backfill_results for w in r.warnings
+            ],
         },
         "artifact_sync": repo_results,
         "watched_activity": watched_activity,
@@ -1241,9 +1747,24 @@ def refresh_index(
                 db_path, blend_team=True, synthesize=True
             )
             next_actions.persist_ranked_next_actions(db_path, ranked)
+            # Render the SAME ranked output to the fixed vault file so the vault
+            # is the calm daily surface (P1-SIGNAL). Gated like the dashboard-note
+            # write-back below (update_dashboard_note + a resolved vault), reusing
+            # the already-resolved path. A vault-write failure is non-fatal — log
+            # it and keep the (already persisted) precompute.
+            vault_file = None
+            if update_dashboard_note and resolved_vault is not None:
+                try:
+                    written = next_actions.write_next_actions_to_vault(
+                        ranked, vault_path=resolved_vault
+                    )
+                    vault_file = str(written) if written else None
+                except Exception as ve:  # noqa: BLE001 — vault write must never break refresh
+                    logger.warning("next_actions vault write failed: %s", ve)
             logger.info(
-                "next_actions precompute: model_used=%s blended=%s count=%d",
+                "next_actions precompute: model_used=%s blended=%s count=%d vault=%s",
                 ranked.model_used or "(none)", ranked.blended, len(ranked.ranked),
+                vault_file or "(skipped)",
             )
             results.append({
                 "scope": "next_actions",
@@ -1251,6 +1772,7 @@ def refresh_index(
                 "model_used": ranked.model_used,
                 "blended": ranked.blended,
                 "count": len(ranked.ranked),
+                "vault_file": vault_file,
             })
         except Exception as e:  # noqa: BLE001 — precompute must never break refresh
             logger.warning("next_actions precompute failed: %s", e)
@@ -1318,17 +1840,57 @@ def _dry_run_adapter(refresh_fn: Callable[..., dict[str, Any]]) -> Callable[...,
 def _vault_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     vault_path = opts.get("vault_path")
     assert vault_path is not None, "vault collector requires vault_path"
-    return _refresh_vault(db_path, vault_path, dry_run=opts["dry_run"])
+    # GH-131 (extended 2026-07-27): same transient "database is locked" collision the
+    # github scope already retries through. On 2026-07-27 the hourly vault-sync failed
+    # 3 of 15 runs on exactly this, in the `vault` and `semantic` scopes — the only two
+    # write-heavy scopes that had NOT been given the retry.
+    #
+    # Safe to retry: ingest_vault deletes then re-inserts per file (CASCADE covers
+    # chunks/keywords/links), so a rerun replaces rather than duplicates, and
+    # embed_chunks only embeds rows with no existing embedding.
+    return _retry_on_db_locked(lambda: _refresh_vault(
+        db_path, vault_path, dry_run=opts["dry_run"]
+    ))
+
+
+def _retry_on_db_locked(
+    fn: Callable[[], Any],
+    *,
+    attempts: int = 3,
+    base_delay_seconds: float = 5.0,
+    sleep_fn: Callable[[float], None] | None = None,
+) -> Any:
+    """Retry ``fn()`` on a SQLite "database is locked" error, with linear
+    backoff (``base_delay_seconds``, 2x, 3x, ...), bounded to ``attempts``
+    tries (GH-131). Any other exception, or a lock still present after the
+    final attempt, propagates immediately — a persistent lock is never
+    silently swallowed, it surfaces as a real scope error.
+    """
+    sleep = sleep_fn if sleep_fn is not None else time.sleep
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt == attempts:
+                raise
+            sleep(base_delay_seconds * attempt)
 
 
 def _github_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_github(
+    # GH-131: db_connection() already sets a 30s busy_timeout, but the hourly
+    # github-sync launchd job (fires :45 past the hour) can hold rebalance.db's
+    # github-table write lock longer than that when it collides with
+    # daily-sync's ~30min 06:30 window — busy_timeout alone then still raises
+    # "database is locked". _refresh_github is idempotent (upserts), so
+    # retrying the whole scope survives the transient collision instead of
+    # failing the run and cascading into a skipped dashboard note.
+    return _retry_on_db_locked(lambda: _refresh_github(
         db_path,
         token=opts["token"],
         since_days=opts["since_days"],
         repos=opts.get("repos") or [],
         dry_run=opts["dry_run"],
-    )
+    ))
 
 
 def _calendar_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
@@ -1340,7 +1902,13 @@ _apple_reminders_adapter = _dry_run_adapter(_refresh_apple_reminders)
 _email_adapter = _dry_run_adapter(_refresh_email)
 _code_adapter = _dry_run_adapter(_refresh_code)
 _figma_adapter = _dry_run_adapter(_refresh_figma)
-_semantic_adapter = _dry_run_adapter(_refresh_semantic_only)
+def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    # GH-131 (extended 2026-07-27) — see _vault_adapter. Safe to retry: the semantic
+    # embed is content-hash keyed, so a rerun re-skips unchanged rows rather than
+    # re-embedding them (2026-07-27 run: 29,099 of 29,956 skipped unchanged).
+    return _retry_on_db_locked(lambda: _refresh_semantic_only(
+        db_path, dry_run=opts["dry_run"]
+    ))
 
 
 def _refresh_sync(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
@@ -1473,15 +2041,55 @@ def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
 _focus5_adapter = _dry_run_adapter(_refresh_focus5)
 
 
-register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
-register_collector(Collector("github", _github_adapter, requires=("github_token",)))
-register_collector(Collector("calendar", _calendar_adapter))
-register_collector(Collector("sleuth", _sleuth_adapter))
+def _refresh_claude_cloud(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Observation-phase refresh for the Claude Code Cloud signal (GH-128).
+
+    DORMANT source: it does not persist a raw table yet — first-class promotion
+    adds one (see PROJECT/1-INBOX/GH-128-CC-CLOUD-JOBS-INGEST.md). A live run
+    fetches today's cloud sessions and returns their data-quality grade, so
+    ``refresh_index(scope=["claude_cloud"])`` doubles as a health probe for the
+    signal while it is being watched.
+    """
+    if dry_run:
+        return {"scope": "claude_cloud", "dry_run": True,
+                "note": "would fetch today's Claude Code Cloud sessions"}
+    from rebalance.ingest.claude_cloud import grade, sessions_for_day
+
+    g = grade(sessions_for_day())
+    return {"scope": "claude_cloud", "dry_run": False, "sessions": g["n"],
+            "grade": g["letter"], "overall": g["overall"], "counts": g.get("counts", {})}
+
+
+_claude_cloud_adapter = _dry_run_adapter(_refresh_claude_cloud)
+
+
+# Next-action candidate providers — the SECOND use of the registry seam
+# (mirroring semantic_docs). Each source owns its candidate shape here, so
+# next_actions._operator_candidates is a registry walk, not a dispatch chain.
+# Imported at registration time (not module top): next_actions does not import
+# index_ops at its top, so this one-directional import is cycle-free.
+from rebalance.ingest.next_actions import (  # noqa: E402
+    calendar_candidates,
+    email_candidates,
+    figma_candidates,
+    github_candidates,
+    sleuth_candidates,
+    vault_candidates,
+)
+
+register_collector(Collector(
+    "vault", _vault_adapter, requires=("vault_path",), candidates=vault_candidates,
+))
+register_collector(Collector(
+    "github", _github_adapter, requires=("github_token",), candidates=github_candidates,
+))
+register_collector(Collector("calendar", _calendar_adapter, candidates=calendar_candidates))
+register_collector(Collector("sleuth", _sleuth_adapter, candidates=sleuth_candidates))
 # Apple Reminders — local macOS read-only source. Opt-in (included_in_all=False):
 # it requires Full Disk Access for the host process and is macOS-only, so it must
 # never be part of a default/launchd `all` run on machines that can't read it.
 register_collector(Collector("apple_reminders", _apple_reminders_adapter, included_in_all=False))
-register_collector(Collector("email", _email_adapter))
+register_collector(Collector("email", _email_adapter, candidates=email_candidates))
 register_collector(Collector("code", _code_adapter, kind="derived_scan"))
 register_collector(Collector("semantic", _semantic_adapter, kind="projection"))
 register_collector(Collector("sync", _sync_adapter, kind="export"))
@@ -1492,7 +2100,9 @@ register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=Fals
 # top) so figma.py — and its later, optional dependencies — only load when the
 # registry is constructed; figma.py's own top imports stay limited to
 # rebalance.ingest.db, so no mlx/embedder is pulled in. included_in_all=False
-# keeps it opt-in (requires a PAT + an explicit file-key allow-list).
+# keeps it opt-in (requires a PAT + an explicit file-key allow-list). The figma
+# arm ships DORMANT — figma_candidates yields nothing until a figma_file_keys
+# allow-list turns the collector on.
 from rebalance.ingest.figma import figma_semantic_docs  # noqa: E402
 
 register_collector(
@@ -1501,6 +2111,25 @@ register_collector(
         _figma_adapter,
         requires=("figma_token",),
         semantic_docs=figma_semantic_docs,
+        candidates=figma_candidates,
         included_in_all=False,
+    )
+)
+
+# Claude Code Cloud (web) sessions — GH-128. Opt-in derived scan; imported here (not
+# at module top) so its stdlib-only fetch loads only when the registry is built. The
+# arm ships DORMANT: claude_cloud_candidates yields nothing until the config flag
+# `claude_cloud_signal_enabled` is set true — the signal is wired into the ranker's
+# candidates= seam but is watched via the Obsidian daily-note grade before it is
+# promoted to influence the live verdict.
+from rebalance.ingest.claude_cloud import claude_cloud_candidates  # noqa: E402
+
+register_collector(
+    Collector(
+        "claude_cloud",
+        _claude_cloud_adapter,
+        candidates=claude_cloud_candidates,
+        included_in_all=False,
+        kind="derived_scan",
     )
 )

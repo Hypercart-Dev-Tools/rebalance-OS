@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-186-scheduler-eintr-crash .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact scripts/github_sync.sh,scripts/lib/scheduler_common.sh \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k scheduler -q' \
+  --require-clean

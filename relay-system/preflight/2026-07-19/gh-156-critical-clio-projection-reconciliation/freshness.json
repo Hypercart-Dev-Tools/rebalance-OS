@@ -1,0 +1,32 @@
+{
+  "fetch_ok": true,
+  "upstream": "origin/development",
+  "ahead": 0,
+  "behind": 1,
+  "dirty": true,
+  "stale_index_lock": false,
+  "stale_index_lock_path": null,
+  "stale_index_lock_warning": null,
+  "evaluated_ref": "development",
+  "evaluated_ref_commit": "0970d3fed656789de8506b131fc210ae3088432c",
+  "checkout_matches_ref": true,
+  "head_behind_ref": 0,
+  "candidate_state": "ready",
+  "probes": [
+    {
+      "type": "grep_absent",
+      "path": "utils/CLIO/INSTALL.md",
+      "verdict": "unfixed"
+    },
+    {
+      "type": "path_absent",
+      "path": "utils/CLIO/prompt-log-to-md.sh",
+      "verdict": "unfixed"
+    },
+    {
+      "type": "path_absent",
+      "path": "test/clio-exporter.sh",
+      "verdict": "unfixed"
+    }
+  ]
+}

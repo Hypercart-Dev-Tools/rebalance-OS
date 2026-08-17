@@ -110,6 +110,132 @@ class TestOccurrenceCounter(unittest.TestCase):
 
 
 # ===========================================================================
+# 1b. Detail block refresh (GH-139) — a repeat sighting must update Detail,
+#     not just the Seen counter.
+# ===========================================================================
+
+class TestDetailRefresh(unittest.TestCase):
+
+    def test_set_detail_replaces_detail_block(self) -> None:
+        body = hr._issue_body("db", "fail", "original detail", "", "rebalance-doctor")
+        updated = hr.set_detail(body, "new root-cause detail")
+        self.assertIn("new root-cause detail", updated)
+        self.assertNotIn("original detail", updated)
+
+    def test_set_detail_preserves_rest_of_body(self) -> None:
+        body = hr._issue_body("db", "fail", "original detail", "a hint", "rebalance-doctor")
+        updated = hr.set_detail(body, "new detail")
+        self.assertIn("## Rebalance health: `db`", updated)
+        self.assertIn("**Status:** `FAIL`", updated)
+        self.assertIn("a hint", updated)
+        self.assertTrue(updated.startswith("> **Seen:** 1×"))
+
+    def test_set_detail_noop_when_no_detail_block(self) -> None:
+        body = "no detail block here"
+        self.assertEqual(hr.set_detail(body, "whatever"), body)
+
+    def test_set_detail_does_not_touch_seen_counter(self) -> None:
+        body = hr._issue_body("db", "fail", "detail v1", "", "rebalance-doctor")
+        body = hr.set_occurrence_count(body, 3, _now_str(), device="host-a")
+        updated = hr.set_detail(body, "detail v2")
+        self.assertIn("> **Seen:** 3×", updated)
+        self.assertIn("detail v2", updated)
+        self.assertNotIn("detail v1", updated)
+
+    def test_repeat_sighting_refreshes_detail_and_counter(self) -> None:
+        """End-to-end: a second sighting with a changed detail must update both."""
+        body = hr._issue_body("db", "fail", "disk full", "", "rebalance-doctor")
+        refreshed = hr.set_detail(body, "disk full — now 99% (was 92%)")
+        new_body = hr.set_occurrence_count(refreshed, 2, _now_str(), device="host-a")
+        self.assertIn("disk full — now 99% (was 92%)", new_body)
+        self.assertNotIn("```\ndisk full\n```", new_body)
+        self.assertIn("> **Seen:** 2×", new_body)
+
+
+# ===========================================================================
+# 1c. Stable check-id dedup (GH-139) — a renamed/retitled issue must still
+#     match its existing open issue instead of orphaning it.
+# ===========================================================================
+
+class TestStableCheckIdDedup(unittest.TestCase):
+
+    def test_issue_body_embeds_check_id_marker(self) -> None:
+        body = hr._issue_body("sleuth", "fail", "detail", "", "rebalance-doctor")
+        self.assertEqual(hr.parse_check_id(body), "sleuth")
+
+    def test_parse_check_id_missing_marker_returns_none(self) -> None:
+        self.assertIsNone(hr.parse_check_id("no marker here"))
+        self.assertIsNone(hr.parse_check_id(""))
+
+    def test_dedup_key_prefers_body_marker_over_title(self) -> None:
+        """A human-retitled GitHub issue must still match its stable id."""
+        body = hr._issue_body("sleuth", "fail", "detail", "", "rebalance-doctor")
+        issue = {"title": "health: sleuth credentials (renamed by operator)", "body": body}
+        self.assertEqual(hr.dedup_key_for_issue(issue), "sleuth")
+
+    def test_dedup_key_falls_back_to_title_for_legacy_issues(self) -> None:
+        """Pre-GH-139 issues (e.g. the #46-48 / #83-85 pulse-collector dupes)
+        have no marker; matching must still work off the title so this fix
+        does not misbehave against them or file new duplicates."""
+        issue = {"title": "health: pulse collector:noels-mbp-16-m1-pro", "body": ""}
+        self.assertEqual(
+            hr.dedup_key_for_issue(issue), "pulse collector:noels-mbp-16-m1-pro"
+        )
+
+    def test_dedup_key_legacy_issue_with_no_body_at_all(self) -> None:
+        issue = {"title": "health: vault", "body": None}
+        self.assertEqual(hr.dedup_key_for_issue(issue), "vault")
+
+    def test_list_health_issues_keys_by_check_id_not_title(self) -> None:
+        """Two issues whose titles differ from ``health: <name>`` — one via
+        the marker (post-fix), one via legacy title parsing (pre-fix) — must
+        both be reachable by their check name, proving the title text no
+        longer gates dedup."""
+        marker_body = hr._issue_body("gmail", "fail", "detail", "", "rebalance-doctor")
+        renamed_issue = {
+            "title": "health: gmail integration (renamed)",
+            "number": 200,
+            "body": marker_body,
+            "state": "open",
+        }
+        legacy_issue = {
+            "title": "health: pulse collector:device-a",
+            "number": 46,
+            "body": "",
+            "state": "open",
+        }
+
+        with patch.object(hr, "_request", side_effect=[[renamed_issue, legacy_issue], []]):
+            issues = hr.list_health_issues("tok", "org/repo", state="open")
+
+        self.assertIn("gmail", issues)
+        self.assertEqual(issues["gmail"]["number"], 200)
+        self.assertIn("pulse collector:device-a", issues)
+        self.assertEqual(issues["pulse collector:device-a"]["number"], 46)
+
+    def test_renamed_check_does_not_orphan_or_duplicate(self) -> None:
+        """Simulates main()'s matching logic: a check whose GitHub issue was
+        retitled (title no longer equals ``health: <name>``) must still be
+        found as 'already open' via the stable check id, not re-filed."""
+        body = hr._issue_body("figma", "fail", "token missing", "", "rebalance-doctor")
+        open_issues = {
+            hr.dedup_key_for_issue({"title": "health: figma token (renamed)", "body": body}):
+                {"title": "health: figma token (renamed)", "number": 77, "body": body}
+        }
+
+        check = _make_check("figma")
+        check_id = check["name"]
+        already_open = open_issues.get(check_id)
+
+        self.assertIsNotNone(
+            already_open,
+            "renamed issue must still be found by its stable check id — "
+            "the old title-only lookup would have missed this and filed a duplicate.",
+        )
+        self.assertEqual(already_open["number"], 77)
+
+
+# ===========================================================================
 # 2. Quota management
 # ===========================================================================
 
@@ -199,23 +325,15 @@ class TestCircuitBreakers(unittest.TestCase):
         self._quota_path.write_text(json.dumps({"date": today, "calls_today": 8}))
         self.assertEqual(hr.quota_remaining(8), 0)
 
-    def test_cb4_import_error_returns_fallback(self) -> None:
-        """CB-4: missing anthropic package must degrade to ('file', ...) without raising."""
-        check = _make_check("test-check")
-        with patch.dict("sys.modules", {"anthropic": None}):
-            decision, reason = hr.llm_triage(check, provider="anthropic")
-        self.assertEqual(decision, "file")
-        self.assertIsInstance(reason, str)  # any non-empty fallback message
-
     def test_cb4_api_error_returns_fallback(self) -> None:
         """CB-4: any LLM API error must degrade to 'file', not raise."""
         check = _make_check("test-check")
 
-        def _exploding_anthropic(*_, **__):
+        def _exploding_gemini(*_, **__):
             raise RuntimeError("connection refused")
 
-        with patch.object(hr, "_triage_anthropic", side_effect=RuntimeError("boom")):
-            decision, reason = hr.llm_triage(check, provider="anthropic")
+        with patch.object(hr, "_triage_gemini", side_effect=RuntimeError("boom")):
+            decision, reason = hr.llm_triage(check, provider="gemini")
         self.assertEqual(decision, "file")
         self.assertIn("error", reason.lower())
 
@@ -224,10 +342,11 @@ class TestCircuitBreakers(unittest.TestCase):
         check = _make_check("test-check")
 
         def _bad_json(*_, **__):
+            import json
             raise json.JSONDecodeError("nope", "", 0)
 
-        with patch.object(hr, "_triage_anthropic", side_effect=_bad_json):
-            decision, reason = hr.llm_triage(check, provider="anthropic")
+        with patch.object(hr, "_triage_gemini", side_effect=_bad_json):
+            decision, reason = hr.llm_triage(check, provider="gemini")
         self.assertEqual(decision, "file")
 
 
@@ -615,27 +734,27 @@ class TestLLMTriage(unittest.TestCase):
         return _make_check("test-check", "warn")
 
     def test_file_decision_passes_through(self) -> None:
-        with patch.object(hr, "_triage_anthropic",
+        with patch.object(hr, "_triage_gemini",
                           return_value={"decision": "file", "reason": "real issue"}):
-            decision, reason = hr.llm_triage(self._check(), provider="anthropic")
+            decision, reason = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "file")
         self.assertEqual(reason, "real issue")
 
     def test_skip_decision_passes_through(self) -> None:
-        with patch.object(hr, "_triage_anthropic",
+        with patch.object(hr, "_triage_gemini",
                           return_value={"decision": "skip", "reason": "noise"}):
-            decision, reason = hr.llm_triage(self._check(), provider="anthropic")
+            decision, reason = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "skip")
 
     def test_downgrade_decision_passes_through(self) -> None:
-        with patch.object(hr, "_triage_anthropic",
+        with patch.object(hr, "_triage_gemini",
                           return_value={"decision": "downgrade", "reason": "low priority"}):
-            decision, reason = hr.llm_triage(self._check(), provider="anthropic")
+            decision, reason = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "downgrade")
 
     def test_empty_dict_response_falls_back_to_file(self) -> None:
-        with patch.object(hr, "_triage_anthropic", return_value={}):
-            decision, _ = hr.llm_triage(self._check(), provider="anthropic")
+        with patch.object(hr, "_triage_gemini", return_value={}):
+            decision, _ = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "file")
 
     def test_openai_compat_missing_config_returns_fallback(self) -> None:
@@ -653,19 +772,16 @@ class TestLLMTriage(unittest.TestCase):
                 os.environ["HEALTH_LLM_MODEL"] = env_backup2
         self.assertEqual(decision, "file")
 
-    def test_real_api_call_haiku(self) -> None:
-        """Live smoke test — skipped if ANTHROPIC_API_KEY is not set.
+    def test_real_api_call_gemini(self) -> None:
+        """Live smoke test — skipped if GEMINI_API_KEY is not set.
 
-        Sends a real request to claude-haiku-4-5-20251001 and verifies the
+        Sends a real request to gemini-3.5-flash and verifies the
         response is a valid triage decision.  Run manually to confirm the
         key and model are working end-to-end.
         """
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            self.skipTest("ANTHROPIC_API_KEY not set — skipping live API test")
-        try:
-            import anthropic  # noqa: F401, PLC0415
-        except ImportError:
-            self.skipTest("anthropic package not installed")
+        from rebalance.ingest.config import get_gemini_api_key
+        if not get_gemini_api_key():
+            self.skipTest("GEMINI_API_KEY not set — skipping live API test")
 
         check = _make_check(
             "github data",
@@ -673,8 +789,8 @@ class TestLLMTriage(unittest.TestCase):
             detail="github_activity last scan 5 days ago (stale)",
             hint="run `rebalance refresh` (scope github)",
         )
-        decision, reason = hr.llm_triage(check, provider="anthropic",
-                                          model="claude-haiku-4-5-20251001")
+        decision, reason = hr.llm_triage(check, provider="gemini",
+                                          model="gemini-3.5-flash")
         self.assertIn(decision, ("file", "skip", "downgrade"),
                       f"Unexpected decision: {decision!r} — reason: {reason}")
         self.assertIsInstance(reason, str)
@@ -699,21 +815,18 @@ class TestLLMTriage(unittest.TestCase):
 # ===========================================================================
 
 class TestTriageScenarios(unittest.TestCase):
-    """Live LLM scenario tests — skipped unless ANTHROPIC_API_KEY is set."""
+    """Live LLM scenario tests — skipped unless GEMINI_API_KEY is set."""
 
-    MODEL = "claude-haiku-4-5-20251001"
+    MODEL = "gemini-3.5-flash"
 
     @classmethod
     def setUpClass(cls) -> None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise unittest.SkipTest("ANTHROPIC_API_KEY not set — skipping live scenario tests")
-        try:
-            import anthropic  # noqa: F401, PLC0415
-        except ImportError:
-            raise unittest.SkipTest("anthropic package not installed")
+        from rebalance.ingest.config import get_gemini_api_key
+        if not get_gemini_api_key():
+            raise unittest.SkipTest("GEMINI_API_KEY not set — skipping live scenario tests")
 
     def _triage(self, check: dict) -> tuple[str, str]:
-        decision, reason = hr.llm_triage(check, provider="anthropic", model=self.MODEL)
+        decision, reason = hr.llm_triage(check, provider="gemini", model=self.MODEL)
         print(f"\n  [{check['name']} / {check['status'].upper()}] → {decision}: {reason}")
         return decision, reason
 
@@ -851,6 +964,128 @@ class TestTriageScenarios(unittest.TestCase):
         )
         decision, reason = self._triage(check)
         self._assert_valid(decision, reason, "gmail-mcp-empty")
+
+
+class TestNoDuplicateCollectorEmitter(unittest.TestCase):
+    """GH-139 regression: the reporter must not emit its own collector checks.
+
+    The bug: this module used to carry ``run_pulse_checks()``, which shelled out
+    to ``experimental/git-pulse/health-check.py`` and screen-scraped fixed-width
+    columns out of its stdout to synthesise checks named ``pulse-collector:<device>``.
+    ``rebalance doctor`` independently emits the same information as
+    ``pulse collector:<device>`` — hyphen versus space.
+
+    Because issues are deduplicated by title, those two spellings never matched,
+    so every device produced a twin issue: 6 issues across 3 machines before
+    anyone noticed. The cure was to delete the reporter's emitter and let
+    doctor's canonical checks flow through as the single source.
+
+    These tests pin the deletion. If a future change reintroduces a
+    reporter-side collector emitter — under any name — the twin-issue bug comes
+    back, and dedup-by-title will not catch it.
+    """
+
+    def test_run_pulse_checks_is_gone(self) -> None:
+        self.assertFalse(
+            hasattr(hr, "run_pulse_checks"),
+            "run_pulse_checks() was deleted under GH-139 — reintroducing a "
+            "reporter-side collector emitter re-creates the twin-issue bug.",
+        )
+
+    def test_reporter_does_not_shell_out_to_the_git_pulse_health_check(self) -> None:
+        """The old emitter built the path piecewise, so assert on the leaf filename.
+
+        Pre-fix source read:
+            script = _REPO_ROOT / "experimental" / "git-pulse" / "health-check.py"
+        so a literal "git-pulse/health-check.py" would never have matched — the
+        leaf is the part that actually appears.
+        """
+        source = (SCRIPTS_DIR / "health_issue_reporter.py").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "health-check.py", source,
+            "The reporter must not invoke the git-pulse health check; doctor "
+            "already surfaces collector health as `pulse collector:*`.",
+        )
+
+    def test_source_contains_no_hyphenated_collector_spelling(self) -> None:
+        """'pulse-collector:' in the source IS the twin-issue fingerprint.
+
+        This is the assertion that actually fails against the pre-fix file — the
+        behavioural test below cannot catch it, because run_doctor_checks() never
+        produced the hyphen form; only the deleted emitter did.
+        """
+        source = (SCRIPTS_DIR / "health_issue_reporter.py").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "pulse-collector:", source,
+            "'pulse-collector:' (hyphen) was the duplicate emitter's spelling. "
+            "doctor's canonical name is 'pulse collector:' (space). Two spellings "
+            "of one check defeat dedup-by-title and file twin issues per device.",
+        )
+
+    def test_all_checks_come_from_doctor(self) -> None:
+        """Every collected check carries source='rebalance-doctor', never a second producer."""
+        fake_report = MagicMock()
+        fake_report.checks = [
+            _make_check_obj("pulse collector:device-a", "warn", "ALERT — last scan 2.0d ago"),
+            _make_check_obj("email data", "ok", "107 rows"),
+        ]
+        with patch("rebalance.doctor.run_doctor", return_value=fake_report):
+            checks = hr.run_doctor_checks()
+
+        self.assertEqual(len(checks), 2)
+        self.assertEqual({c["source"] for c in checks}, {"rebalance-doctor"})
+
+    def test_no_check_uses_the_hyphenated_collector_spelling(self) -> None:
+        """The hyphen form is the fingerprint of the deleted emitter."""
+        fake_report = MagicMock()
+        fake_report.checks = [
+            _make_check_obj("pulse collector:device-a", "warn", "ALERT"),
+        ]
+        with patch("rebalance.doctor.run_doctor", return_value=fake_report):
+            checks = hr.run_doctor_checks()
+
+        for check in checks:
+            self.assertNotIn(
+                "pulse-collector:", check["name"],
+                "'pulse-collector:' (hyphen) was the duplicate emitter's spelling; "
+                "doctor's canonical name is 'pulse collector:' (space). Two "
+                "spellings of one check defeat dedup-by-title.",
+            )
+
+    def test_also_pulse_is_accepted_but_adds_no_checks(self) -> None:
+        """--also-pulse is kept as a deprecated no-op so scheduled invocations don't break.
+
+        The parser is built inline in main() and parse_args() takes no argv, so
+        this asserts on the source: the flag must still be declared (compat), and
+        its branch must not collect anything (that branch collecting again IS the
+        GH-139 bug).
+        """
+        source = (SCRIPTS_DIR / "health_issue_reporter.py").read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"--also-pulse"', source,
+            "The flag must remain accepted — launchd jobs still pass it.",
+        )
+
+        _, _, after_flag = source.partition("if args.also_pulse:")
+        self.assertTrue(after_flag, "expected an `if args.also_pulse:` branch in main()")
+        branch = after_flag.split("\n\n", 1)[0]
+        for forbidden in ("checks.extend", "run_pulse", "health-check.py"):
+            self.assertNotIn(
+                forbidden, branch,
+                f"--also-pulse must stay a no-op; found {forbidden!r} in its branch, "
+                "which re-creates the duplicate collector emitter (GH-139).",
+            )
+
+
+def _make_check_obj(name: str, status: str, detail: str, hint: str = ""):
+    """A stand-in for rebalance.doctor.Check (attribute access, not a dict)."""
+    obj = MagicMock()
+    obj.name = name
+    obj.status = status
+    obj.detail = detail
+    obj.hint = hint
+    return obj
 
 
 if __name__ == "__main__":

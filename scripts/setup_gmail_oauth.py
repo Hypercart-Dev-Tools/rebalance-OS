@@ -27,13 +27,17 @@ follow-up migrate step is needed.
 import argparse
 
 from google_auth_oauthlib.flow import InstalledAppFlow
-from rebalance.ingest import config, secret_store
+from rebalance.ingest import config
 from rebalance.ingest.auth_log import (
     log_flow_started,
     log_flow_succeeded,
     log_flow_failed,
 )
-from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
+from rebalance.ingest.google_oauth_client import (
+    GoogleOAuthClientNotConfigured,
+    build_google_oauth_client_config,
+)
+from rebalance.paths import resolve_oauth_token_path
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 SECRET_STORE_KEY = "google-gmail-oauth"  # JSON fallback in the secret store
@@ -64,16 +68,19 @@ def authorize_gmail(scopes: list[str]):
 
     token_json = creds.to_json()
     config.set_gmail_oauth_token_json(token_json, source="manual", record=True)  # keyring
-    secret_store.write_secret_file(SECRET_STORE_KEY, token_json)                  # JSON fallback
+    token_path = resolve_oauth_token_path("gmail")                                # JSON fallback
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(token_json, encoding="utf-8")
+    token_path.chmod(0o600)
 
     log_flow_succeeded(
         expiry=creds.expiry.isoformat() if creds.expiry else None,
         scopes=list(scopes),
-        token_path="keyring + secret store",
+        token_path=str(token_path),
         source="gmail",
     )
     print("\n✅ Token saved to keyring + secret store")
-    print(f"   Fallback: {secret_store.secret_path(SECRET_STORE_KEY)}")
+    print(f"   Fallback: {token_path}")
     print(f"   Expires: {creds.expiry}")
     print(f"   Scopes:  {', '.join(scopes)}")
     return creds
@@ -109,6 +116,12 @@ if __name__ == "__main__":
         print("Next steps:")
         print("  1. rebalance config set-gmail-method oauth   # if currently on mcp")
         print("  2. rebalance doctor                          # verify gmail is green\n")
+
+    except GoogleOAuthClientNotConfigured as e:
+        # A missing client file is a setup step the operator has not done yet, not a
+        # crash. A traceback here buries the instructions that actually fix it.
+        print(f"\n❌ {e}\n")
+        exit(2)
 
     except Exception as e:
         print(f"\n❌ Error: {e}")

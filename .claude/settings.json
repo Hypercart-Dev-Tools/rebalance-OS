@@ -1,4 +1,7 @@
 {
+  "env": {
+    "PDDA_STALE_DAYS": "14"
+  },
   "permissions": {
     "allow": [
       "mcp__rebalance__onboarding_status",
@@ -103,7 +106,48 @@
       "Bash(rtk du *)",
       "Bash(rtk ls *)",
       "Bash(sed -n '1,80p' relay-system/2026-06-24/gh81-rank-vector.md)",
-      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)"
+      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)",
+      "mcp__rebalance__diagnose_repo",
+      "mcp__rebalance__list_watched_repos",
+      "Bash(utils/pdda.sh status-table *)",
+      "Bash(utils/pdda.sh roadmap-coverage *)",
+      "Bash(utils/pdda.sh frontmatter *)",
+      "Bash(vm_stat)",
+      "Bash(awk '/page size of/{ps=$8} /Pages free/{f=$3} /Pages inactive/{i=$3} /Pages speculative/{s=$3} /Pages occupied by compressor/{c=$5} END{gsub\\(/\\\\./,\"\",f\\);gsub\\(/\\\\./,\"\",i\\);gsub\\(/\\\\./,\"\",s\\);gsub\\(/\\\\./,\"\",c\\); printf \"free       = %6.2f GB\\\\ninactive   = %6.2f GB\\\\nspeculative= %6.2f GB\\\\ncompressor = %6.2f GB\\\\n\", f*16384/2^30, i*16384/2^30, s*16384/2^30, c*16384/2^30}')",
+      "Bash(sysctl -n vm.swapusage)",
+      "Bash(echo \"exit=$? \\(1 = no matches\\)\")",
+      "Bash(npm test *)",
+      "Bash(xattr -l node_modules/@esbuild/darwin-arm64/bin/esbuild)",
+      "Bash(codesign -dv node_modules/@esbuild/darwin-arm64/bin/esbuild)",
+      "Bash(rm -rf node_modules)",
+      "Bash(npm ci *)",
+      "Bash(plutil -p ~/Library/LaunchAgents/com.neochro.sys-mem-attribute.plist)",
+      "Bash(plutil -p ~/Library/LaunchAgents/com.neochro.servers-monitor.plist)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "utils/pdda/pdda-leaf-ingest-guard.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "utils/3-eyes-session-log.py",
+            "timeout": 15,
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }

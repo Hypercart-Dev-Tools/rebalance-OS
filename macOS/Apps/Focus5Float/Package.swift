@@ -12,5 +12,9 @@ let package = Package(
             name: "Focus5Float",
             resources: [.process("Resources")]
         ),
+        .testTarget(
+            name: "Focus5FloatTests",
+            dependencies: ["Focus5Float"]
+        ),
     ]
 )

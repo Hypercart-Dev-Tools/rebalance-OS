@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rebalance.lib.time_ops import parse_utc_iso
+
 # Mirror experimental/git-pulse/health-check.py defaults.
 WARN_HOURS = 3.0
 ALERT_HOURS = 24.0
@@ -70,15 +72,7 @@ def _yaml_value(path: Path, key: str) -> str:
 
 
 def _parse_utc(value: str) -> datetime | None:
-    if not value:
-        return None
-    normalized = value.strip()
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    try:
-        return datetime.fromisoformat(normalized).astimezone(timezone.utc)
-    except ValueError:
-        return None
+    return parse_utc_iso(value)
 
 
 def _int(value: str) -> int:

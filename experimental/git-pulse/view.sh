@@ -17,6 +17,19 @@ source "$CONFIG_FILE"
 
 : "${sync_repo_dir:=$CONFIG_DIR/repo}"
 
+# Pin the day-boundary timezone to the machine's real local zone (or an explicit
+# override) so a scheduler — e.g. a launchd job invoking us with TZ=UTC — cannot
+# shift "today" into a different calendar day and drop the whole day's commits,
+# which surfaces downstream as a bogus "No git activity found today" (GH-129).
+# Honors an explicit `display_timezone` from config, else resolves /etc/localtime.
+# When TZ is already unset the result is identical to prior behavior; this only
+# changes anything when the ambient TZ is wrong (the bug).
+if [ -n "${display_timezone:-}" ]; then
+    export TZ="$display_timezone"
+elif [ -L /etc/localtime ]; then
+    export TZ="$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')"
+fi
+
 FILTER_DATE=""
 FILTER_DAYS=""
 FILTER_DEVICE_ID=""

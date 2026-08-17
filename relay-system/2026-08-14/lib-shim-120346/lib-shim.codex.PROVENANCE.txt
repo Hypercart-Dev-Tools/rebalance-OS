@@ -1,0 +1,4 @@
+FIRSTHAND_COUNT=1
+ECHOED_COUNT=2
+ECHOED `# raw-ok`
+ECHOED `# raw-ok`

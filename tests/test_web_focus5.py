@@ -135,13 +135,18 @@ class FocusBodyTests(unittest.TestCase):
             {"repo_name": "scratch", "local_path": "/x/scratch", "repo_full_name": None,
              "branch": "main", "ahead": 0, "modified_count": 2, "untracked_count": 1,
              "is_dirty": True, "probed_at": _now_iso(hours=1)},
+            {"repo_name": "other-proj", "local_path": "/x/other-proj", "repo_full_name": None,
+             "branch": "main", "ahead": 0, "modified_count": 0, "untracked_count": 0,
+             "is_dirty": False, "probed_at": _now_iso(hours=1)},
         ]
         body = _focus5_body(_data([_card()], off_roster_warnings=warns))
         self.assertIn("f5-warn", body)
         self.assertIn("side-proj", body)
-        self.assertIn("3 unpushed", body)
+        self.assertIn("3 ahead of origin", body)
         self.assertIn("scratch", body)
-        self.assertIn("2 modified", body)
+        self.assertIn("uncommitted changes", body)
+        self.assertIn("other-proj", body)
+        self.assertIn("needs attention", body)
 
     def test_no_warning_strip_when_all_clear(self) -> None:
         body = _focus5_body(_data([_card()]))  # no off-roster warnings
@@ -212,6 +217,44 @@ class FocusBodyTests(unittest.TestCase):
         card = _card(health_available=False)
         body = _focus5_body(_data([card]))
         self.assertIn("unavailable", body)
+
+    # --- GH-105: the single "BTW, this went dirty" banner ---
+
+    def test_dirty_banner_renders_repo_and_detail(self) -> None:
+        now = int(datetime.now(timezone.utc).timestamp())
+        banner = {
+            "repo_name": "sleuth-app", "local_path": "/x/sleuth-app",
+            "repo_full_name": "me/sleuth-app", "branch": "development",
+            "ahead": 0, "modified_count": 4, "untracked_count": 0,
+            "is_dirty": True, "probed_at": _now_iso(hours=1),
+            "my_local_commit_ts": now - 2 * 3600, "recency_basis": "local_reflog",
+        }
+        body = _focus5_body(_data([_card()], dirty_banner=banner))
+        self.assertIn("f5-dirty-banner", body)
+        self.assertIn("sleuth-app", body)
+        self.assertIn("4 modified", body)
+        self.assertIn("2h ago", body)
+
+    def test_no_dirty_banner_when_absent(self) -> None:
+        body = _focus5_body(_data([_card()]))  # no dirty_banner key at all
+        self.assertNotIn("f5-dirty-banner", body)
+
+    def test_no_dirty_banner_when_none(self) -> None:
+        body = _focus5_body(_data([_card()], dirty_banner=None))
+        self.assertNotIn("f5-dirty-banner", body)
+
+    def test_dirty_banner_escapes_repo_name(self) -> None:
+        now = int(datetime.now(timezone.utc).timestamp())
+        banner = {
+            "repo_name": "<script>x</script>", "local_path": "/x/evil",
+            "repo_full_name": None, "branch": "main", "ahead": 0,
+            "modified_count": 1, "untracked_count": 0, "is_dirty": True,
+            "probed_at": _now_iso(hours=1),
+            "my_local_commit_ts": now - 3600, "recency_basis": "local_reflog",
+        }
+        body = _focus5_body(_data([_card()], dirty_banner=banner))
+        self.assertNotIn("<script>x</script>", body)
+        self.assertIn("&lt;script&gt;", body)
 
 
 class ViewToggleTests(unittest.TestCase):
@@ -389,6 +432,88 @@ class Focus5NoteRouteTests(unittest.TestCase):
                 resp = self._get()
             self.assertEqual(resp.status_code, 200)
             self.assertFalse(resp.json()["exists"])
+
+
+class Focus5GoalsRouteTests(unittest.TestCase):
+    def _get(self):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        return TestClient(app).get("/focus-5/goals")
+
+    def _post_complete(self, payload: dict[str, object]):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        return TestClient(app).post("/api/focus5/goals/complete", json=payload)
+
+    def test_serves_top_open_goals_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "0. Goals.md").write_text(
+                "\n".join(f"- [ ] Open item {i}" for i in range(1, 11)),
+                encoding="utf-8",
+            )
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
+                resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["exists"])
+        self.assertEqual(body["total_open"], 10)
+        self.assertEqual(len(body["items"]), 8)
+        self.assertEqual(body["items"][0]["title"], "Open item 1")
+        self.assertEqual(body["items"][-1]["title"], "Open item 8")
+
+    def test_missing_goals_returns_exists_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
+                resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["exists"])
+        self.assertEqual(resp.json()["items"], [])
+        self.assertEqual(resp.json()["reason"], "file_missing")
+        self.assertTrue(resp.json()["path"].endswith("0. Goals.md"))
+
+    def test_no_vault_configured_returns_reason(self) -> None:
+        with mock.patch("rebalance.ingest.config.get_vault_path", return_value=None):
+            resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body["exists"])
+        self.assertEqual(body["reason"], "vault_not_configured")
+        self.assertIn("vault_path", body["message"])
+
+    def test_complete_marks_exact_line_then_returns_refreshed_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            goals = Path(tmp) / "0. Goals.md"
+            goals.write_text(
+                "\n".join(
+                    [
+                        "- [ ] Duplicate",
+                        "- [ ] Unique",
+                        "- [ ] Duplicate",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp), \
+                 mock.patch("rebalance.web._request_is_local", return_value=True):
+                resp = self._post_complete({"title": "Duplicate", "line_index": 2})
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(body["ok"])
+            self.assertEqual(body["total_open"], 2)
+            self.assertEqual([item["title"] for item in body["items"]], ["Duplicate", "Unique"])
+            self.assertEqual(
+                goals.read_text(encoding="utf-8").splitlines(),
+                ["- [ ] Duplicate", "- [ ] Unique", "- [x] Duplicate"],
+            )
+
+    def test_complete_rejects_non_local_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "0. Goals.md").write_text("- [ ] One\n", encoding="utf-8")
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp), \
+                 mock.patch("rebalance.web._request_is_local", return_value=False):
+                resp = self._post_complete({"title": "One", "line_index": 0})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(resp.json()["ok"])
 
 
 if __name__ == "__main__":

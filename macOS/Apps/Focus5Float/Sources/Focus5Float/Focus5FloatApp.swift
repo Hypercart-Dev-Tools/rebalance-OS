@@ -37,10 +37,31 @@ final class FloatingPanel: NSPanel {
 // so buttons fire on the first click over a frontmost fullscreen app.
 final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // GH-187 REGRESSION GUARD: `.fullSizeContentView` makes the AppKit content
+    // view fill the panel frame, but NSHostingView still inherits the hidden
+    // titlebar's 28pt safe-area inset. If this override is removed, the window
+    // can be flush with the menu bar while the visible SwiftUI shell starts
+    // 28pt lower and looks artificially height-capped. Keep this invariant at
+    // the AppKit/SwiftUI boundary; the regression test mounts this real hosting
+    // view in the real FloatingPanel chrome and asserts a zero top inset.
+    override var safeAreaInsets: NSEdgeInsets { NSEdgeInsets() }
+}
+
+/// Frame-size constraints for the floating panel. Width is intentionally
+/// bounded, but height must retain AppKit's default maximum: a screen-height
+/// cap prevents a slightly off-screen/autosaved panel from growing its top edge
+/// back to the menu bar.
+enum PanelSizing {
+    static let minimum = NSSize(width: 340, height: 360)
+    static let maximum = NSSize(
+        width: 420,
+        height: CGFloat(Float.greatestFiniteMagnitude)
+    )
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var panel: FloatingPanel!
     private var statusItem: NSStatusItem!
     private var contextMenu: NSMenu!
@@ -48,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dirtyFiveItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var selectTelemetryItem: NSMenuItem!
+    private var selectPromptLogItem: NSMenuItem!
     private let model = Focus5Model()
     private var pollTimer: Timer?
     private let pollInterval: TimeInterval = 90   // re-pull cadence
@@ -79,8 +101,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Show the cached roster instantly (if any), then pull live and poll.
         model.loadCache()
         model.refreshTelemetry()   // restore previously-selected telemetry file on cold-start
+        model.refreshPromptLog()   // restore previously-selected prompt log file on cold-start
         Task { await model.refresh(); updateModeMenuState() }
         startPolling()
+    }
+
+    // Fires on Dock/Launch-Services reopen (e.g. clicking a pinned Dock tile
+    // while already running). The panel is an NSPanel we manually orderOut(),
+    // not a standard miniaturized/hidden window, so AppKit's default reopen
+    // handling has nothing to unhide — bring it forward ourselves.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !panel.isVisible {
+            showPanel()
+        }
+        return true
     }
 
     private func startPolling() {
@@ -111,6 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         selectTelemetryItem = NSMenuItem(title: "Select Telemetry File…", action: #selector(selectTelemetryFile), keyEquivalent: "t")
         menu.addItem(selectTelemetryItem)
+        selectPromptLogItem = NSMenuItem(title: "Select Prompt Log File…", action: #selector(selectPromptLogFile), keyEquivalent: "p")
+        menu.addItem(selectPromptLogItem)
 
         launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         menu.addItem(launchAtLoginItem)
@@ -128,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateModeMenuState()
         updateLaunchAtLoginState()
         updateTelemetryMenuItem()
+        updatePromptLogMenuItem()
     }
 
     private func updateTelemetryMenuItem() {
@@ -135,6 +172,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             selectTelemetryItem.title = "Telemetry: \(url.lastPathComponent)"
         } else {
             selectTelemetryItem.title = "Select Telemetry File…"
+        }
+    }
+
+    private func updatePromptLogMenuItem() {
+        if let url = model.promptLogFileURL {
+            selectPromptLogItem.title = "Prompt Log: \(url.lastPathComponent)"
+        } else {
+            selectPromptLogItem.title = "Select Prompt Log File…"
         }
     }
 
@@ -149,13 +194,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Panel
 
     private func buildPanel() {
-        // Compact by default now the header is a slim emoji tab row over a
-        // wrapped status line: 200 wide is a comfortable starting point that can
-        // be dragged down to the 180 floor without clipping. 660 tall leaves the
-        // roster room above the new two-section bottom drawer (Reminders + note).
-        let defaultRect = NSRect(x: 0, y: 0, width: 200, height: 660)
+        // Reference-design refresh: default back to a deliberate 340-wide shell,
+        // matching the RepoMonitor panel proportions while keeping the existing
+        // scroll-driven height. The header still allows a bounded wider state.
+        let defaultRect = NSRect(x: 0, y: 0, width: 340, height: 660)
 
-        let hostingView = FirstMouseHostingView(rootView: ContentView(model: model))
+        let hostingView = FirstMouseHostingView(rootView: ContentView(
+            model: model,
+            onHide: { [weak self] in
+                Task { @MainActor in
+                    self?.hidePanel()
+                }
+            }
+        ))
         hostingView.frame = defaultRect
 
         panel = FloatingPanel(
@@ -170,6 +221,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.isMovableByWindowBackground = true
         panel.level = .floating
         panel.isFloatingPanel = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
@@ -182,15 +235,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.standardWindowButton(.zoomButton)?.isHidden = true
 
         panel.contentView = hostingView
+        panel.delegate = self
 
-        // Floor — 180 wide is the narrow target the emoji tab row + wrapped
-        // status line are built for; below that the tab row would start to clip.
-        panel.minSize = NSSize(width: 180, height: 320)
+        // Keep the reference width by default but allow one bounded wider state.
+        // Do not cap height to a screen here: an autosaved frame can be offset a
+        // few points below the visible frame, and a screen-height maximum then
+        // blocks the top edge before it can reach the menu bar.
+        panel.minSize = PanelSizing.minimum
+        panel.maxSize = PanelSizing.maximum
 
-        // Frame autosave — remembers position & size across launches. Bumped to
-        // ".v4" so the taller default (room for the Reminders + note drawer) takes
-        // effect once over any stale ".v3" height, then persists again.
-        panel.setFrameAutosaveName("Focus5FloatPanel.v4")
+        // Frame autosave — bumped so the refreshed width/glass shell takes effect
+        // once over any prior narrow saved frame, then persists again.
+        panel.setFrameAutosaveName("Focus5FloatPanel.v5")
         if panel.frame.origin == .zero {
             panel.center()
         }
@@ -214,12 +270,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func showPanel() {
         panel.orderFrontRegardless()   // show WITHOUT activating the app
-        log.info("panel shown")
+        logPanelGeometry("shown")
     }
 
     private func hidePanel() {
         panel.orderOut(nil)
         log.info("panel hidden")
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        logPanelGeometry("live resize ended")
+    }
+
+    private func logPanelGeometry(_ event: String) {
+        let frame = NSStringFromRect(panel.frame)
+        let maximum = NSStringFromSize(panel.maxSize)
+        let contentMaximum = NSStringFromSize(panel.contentMaxSize)
+        let screenVisibleFrame = panel.screen.map { NSStringFromRect($0.visibleFrame) } ?? "none"
+        log.info("panel \(event, privacy: .public) frame=\(frame, privacy: .public) max=\(maximum, privacy: .public) contentMax=\(contentMaximum, privacy: .public) screenVisible=\(screenVisibleFrame, privacy: .public)")
     }
 
     // MARK: - Actions
@@ -236,6 +304,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func selectTelemetryFile() {
         model.openFilePicker()
+    }
+
+    @objc private func selectPromptLogFile() {
+        model.openPromptLogFilePicker()
     }
 
     @objc private func setFocus5Mode() {

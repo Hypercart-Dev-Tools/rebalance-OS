@@ -45,6 +45,12 @@
     <key>KeepAlive</key>
     <false/>
 
+    <!-- Batch job, and one of the three that EMBED (GH-175 finding 2). Yields to
+         interactive work. The memory protection is the job guard in
+         rebalance.ingest, not this — see GH-172. -->
+    <key>Nice</key>
+    <integer>5</integer>
+
     <key>ProcessType</key>
     <string>Background</string>
 </dict>

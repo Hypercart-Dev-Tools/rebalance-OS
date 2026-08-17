@@ -23,6 +23,7 @@ from typing import Any
 
 
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
+from rebalance.lib.time_ops import parse_date
 from rebalance.paths import resolve_oauth_token_path
 TOKEN_PATH = resolve_oauth_token_path("calendar")
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -618,8 +619,8 @@ def get_daily_totals(
     results = []
     for date_str in sorted(daily_data.keys()):
         count, total_mins = daily_data[date_str]
-        day_obj = datetime.fromisoformat(date_str).date()  # raw-ok: date-only string, no Z
-        day_name = day_obj.strftime("%A")
+        day_obj = parse_date(date_str)
+        day_name = day_obj.strftime("%A") if day_obj else ""
 
         results.append(DailyEventTotal(
             date=date_str,

@@ -2,9 +2,13 @@
 
 > How data flows through the system. For execution decisions see [PROJECT.md](./PROJECT.md), for tool specs see [MCP.md](./MCP.md), for the *why* behind these decisions see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
+> **New maintainer? Start with [Maintainer Orientation](#maintainer-orientation-start-here)** — the load-bearing symbols, the two hubs, where to start reading, and one end-to-end trace. **This doc is load-bearing, not decorative:** `audit_modules` (the `audit_modules` MCP tool / [scripts/audit_modules.py](scripts/audit_modules.py)) and the PDDA gate enforce that collectors, render modules, and scheduled jobs stay documented here — update ARCHITECTURE.md in the *same PR* as any structural change.
+
 ---
 
 ## Core Pipeline
+
+**INVARIANT**: **Compose, don't mutate**. No new query surfaces (like `semantic_query` vs `ask`) or UI renderers (web server vs static HTML) may be introduced without a plan to deprecate and replace the old one. If extending an existing pipeline, build reusable primitives in `src/rebalance/lib/` instead of duplicating logic in the caller.
 
 ```
 Signals (data sources)
@@ -45,6 +49,65 @@ A few caps to know about up-front:
 - **Vault, sleuth, embeddings** are unbounded — they cover everything they can see.
 
 Detailed per-source mechanics live in [Storage Layer → Sync semantics per source](#sync-semantics-per-source).
+
+---
+
+## Maintainer Orientation (start here)
+
+New to the codebase? Read this section first — it is the mental model the rest of the doc assumes.
+
+### The two hubs (the model that prevents confusion)
+
+The system has **two** central things with *opposite* roles. Conflating them is the most common newcomer mistake:
+
+- **Orchestration spine — fan-OUT.** `refresh_index()` plus the `COLLECTORS` registry in
+  [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py) reach **out** into every collector. This is the
+  one intended write/refresh entry point. New ingestion work registers here (`register_collector(Collector(...))`).
+- **Persistence base — fan-IN.** [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_database_path()` (answers *which* DB file)
+  → `db_connection()` in [src/rebalance/ingest/db/](src/rebalance/ingest/db/) (answers *how* to open it). Everything reaches **down** to these.
+
+They compose in a single hop (`refresh_index() → db_connection()`). Keeping orchestration and persistence in
+**separate** nodes is *why the codebase has no god-object* despite `db_connection()` being the single most-connected
+symbol: it is a thin, stateless connection factory (a dependency *sink*), not a place where logic lives. **Read from it
+freely; think twice before changing it** — its blast radius is the whole system.
+
+### Load-bearing symbols (you will see these in almost every file)
+
+| Symbol | Where | What it is / why it's everywhere |
+|---|---|---|
+| `db_connection()` | `ingest/db/connection.py` | SQLite factory (WAL, foreign keys, 30s busy-timeout, sqlite-vec). Every collector opens its connection here. **High fan-in, zero business logic.** |
+| `resolve_database_path()` | `paths.py` | "Which DB file" — layered resolver (`--database` flag → `REBALANCE_DB` → canonical app-data path → user config). Single source of truth for the DB location. |
+| `_read_config()` / `_write_config()` | `ingest/config.py` | Layered config + secrets (`temp/rbos.config` + keyring/secret-store). |
+| `CalendarConfig` | `ingest/calendar_config.py` | Validated calendar settings (event filters, signal weights). |
+| `normalize_github_repo_name()` | `ingest/github_scan.py` | Canonical `owner/repo` string used across every GitHub path. |
+| `refresh_index()` | `ingest/index_ops.py` | The orchestrated ingest entry point (see "two hubs" above). |
+| `rank_next_actions()` | `ingest/next_actions.py` | Entry point for the "what to do next" engine (see [Query Layer](#the-next-actions-engine-what-to-do-next)). |
+| `run_doctor()` | `doctor.py` | Health-check orchestrator; backs `rebalance doctor` (run it before claiming a change works). |
+
+### Where to start reading when touching X
+
+| If you're working on… | Start in | Then read |
+|---|---|---|
+| A data source (add/fix ingest) | `ingest/index_ops.py` (the `COLLECTORS` registry) + that source's `ingest/<source>.py` | [Adding a New Source](#adding-a-new-source) |
+| The read / query side | `ingest/semantic_index.py` (retrieval primitive) + `ingest/querier.py` (`ask()` orchestrator) | [Query Layer](#query-layer) |
+| Focus 5 roster / ranking | `ingest/focus5_scan.py` | the `web.py` `/focus-5` route |
+| Apple Reminders | `ingest/apple_reminders.py` (read) + `ingest/apple_reminders_write.py` (write, via signed helper) | — |
+| "What to do next" | `ingest/next_actions.py` | [The Next Actions engine](#the-next-actions-engine-what-to-do-next) |
+| Web dashboard surfaces | `web.py` + `web_components.py` | [Invocation Modes](#invocation-modes) |
+| Config / secrets | `ingest/config.py` + `paths.py` | [Credentials](#credentials) |
+| Scheduling / launchd jobs | [SCHEDULER.md](SCHEDULER.md) + `scripts/*_sync.sh` | [Invocation Modes](#invocation-modes) |
+| The database itself (schema/migrations) | `ingest/db/` (connection, schema, migrations) | [Storage Layer](#storage-layer) |
+
+### One request, end-to-end (worked trace)
+
+A `rebalance refresh` (or the `refresh_index` MCP tool) flows through real symbols like this:
+
+1. **`refresh_index()`** [`index_ops.py`] resolves the scope and iterates the `COLLECTORS` registry (each entry added via `register_collector(Collector(...))`).
+2. Each collector's **`sync_*()`** runs fetch → normalize → upsert — e.g. `sync_apple_reminders()`, `github_scan()`, `sync_sleuth_reminders()`.
+3. The collector opens storage via **`db_connection(path, ensure_<source>_schema)`** and upserts (e.g. `sync_apple_reminders()` → `upsert_apple_reminders()` → `db_connection()`).
+4. **Derived stages** follow (`code`, `semantic`, `sync`): the unified semantic index is rebuilt by `backfill_semantic_documents()` and embedded.
+5. **Read side:** `semantic_index.query()` (raw retrieval primitive; MCP `semantic_query`) and `querier.ask()` (broad synthesis orchestrator) read the *same* SQLite via `resolve_database_path()` → `db_connection()`.
+6. **Surfaces:** the `web.py` routes (`/focus-5`, `/auth-log`, what's-next), the Typer CLI, and the MCP tools all read through that one persistence base.
 
 ---
 
@@ -180,10 +243,10 @@ Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`re
 
 1. **Collector** — write `src/rebalance/ingest/<source>.py` following the `sleuth_reminders.py` or `github_scan.py` shape: a dataclass for one record, a `sync_*()` function that fetches → normalizes → upserts, and a module-local `ensure_<source>_schema(conn)`. Use `db_connection(path, ensure_fn)` from the `ingest/db/` package.
 2. **Schema** — keep the `CREATE TABLE` inside `ensure_<source>_schema`. Only promote to the shared `ingest/db/` package if more than one module needs it. Use existing tables for unstructured text that should be embedded.
-3. **Registry** — register the source in `index_ops.py` with `register_collector(Collector(...))`. Add `requires=...` and `semantic_docs=...` metadata if the source needs preconditions or participates in the unified semantic index.
+3. **Registry** — register the source in `index_ops.py` with `register_collector(Collector(...))`. Add `requires=...`, `semantic_docs=...`, and/or `candidates=...` metadata if the source needs preconditions, participates in the unified semantic index, or contributes next-action candidates to the HiQS ranking. The `candidates=` provider is how a source reaches the ranked "what to do next" verdict — no edit to the ranker's dispatch.
 4. **Credentials** — if the source uses env-style secret files, resolve them through `resolve_secret_path()` and a small domain loader (see `cli/calendar.py` / `cli/sleuth.py`). Never hardcode secrets in repo files.
-5. **Context gatherer** — add a `_gather_<source>_context()` function in `querier.py` only if the source should participate in `ask()`.
-6. **Prompt section** — add a block in `_build_prompt()` to format the new context for the LLM only if the source participates in synthesis.
+5. **Next-action candidates** — to feed the HiQS ranking, supply a `candidates=` provider on the `Collector` (a function `bundle → list[candidate dict]`, each Attested with `source`/`evidence`/`why`). `_operator_candidates()` walks the registry, so no ranker edit is needed. A source participates in `ask()` automatically once it is in the ranked bundle — `ask()` reads the whole ranking via `_gather_hiqs_context()`.
+6. **Prompt section** — the HiQS section in `_build_prompt()` already renders every ranked source; add a bespoke `_build_prompt()` block only for context that is NOT a ranked next-action.
 7. **CLI + MCP** — add thin wrappers in `src/rebalance/cli/*` and `src/rebalance/mcp/tools/*` if the source needs direct user-facing operations beyond `refresh_index()`.
 8. **Scheduled refresh** — ensure `included_in_all` and any explicit scheduler usage match the source's intended unattended behavior.
 9. **Tests** — add `tests/test_<source>.py` that stubs the outbound call (patch `urlopen` for HTTP, filesystem for local sources). Verify insert / unchanged / update semantics.
@@ -196,11 +259,31 @@ No changes needed to the query layer, LLM synthesis, or MCP transport.
 
 Single SQLite file resolved by `src/rebalance/paths.py::resolve_database_path()`. Default canonical location is `~/Library/Application Support/rebalance-os/rebalance.db` on macOS (or `$XDG_DATA_HOME/rebalance-os/rebalance.db` on Linux); `REBALANCE_DB` env var, an `--database` flag, or a user-config override all win against the canonical path when set. sqlite-vec extension loaded for vector operations.
 
+### Write discipline (one writer per table)
+
+The single most important invariant for a new maintainer to preserve:
+
+- **Reads are unrestricted.** Anything may open `db_connection()` and `SELECT`. The "Tables by Domain" list below names the *writer* for each table — that ownership is about **writes**, not reads.
+- **One writer per table.** Each table is written by exactly one module (e.g. `github_activity` ← `github_scan.py`, `sleuth_reminders` ← `sleuth_reminders.py`, `semantic_documents` ← the `semantic` stage only). Do not add a second writer; extend the owning collector instead.
+- **Writes go through the orchestrator.** New ingestion/refresh writes register as a `Collector` in `index_ops.py` and run under `refresh_index()` — not as a fresh leaf that opens `db_connection()` and upserts on its own.
+- **Known, accepted exceptions (direct `db_connection()` writers outside `refresh_index`).** A few interactive/operator commands write directly *by design* — they are human-in-the-loop mutations, not unattended ingest: `rebalance github-sync-artifacts` (`cli/github.py::github_sync_artifacts()`) and the `rebalance apple-reminders` write path (`cli/apple_reminders.py`). Most other direct `db_connection()` calls from `cli/*` (`onboard`, `config-doctor`, `raw`, `dashboard-render`) are **reads**, which are fine. If you add a new direct *writer*, document it here and say why it can't go through the registry.
+
 ### Tables by Domain
 
 ```
-Project Registry (writer: registry.py)
-  project_registry          — canonical project metadata
+Project Registry (writer: registry.py::sync_db(), the single low-level upsert)
+  project_registry          — canonical project metadata. Rows are either curated
+                               (write_semantics="confirmation_gated", written only
+                               via the onboarding confirm_projects()/confirm_and_write()
+                               path — see lifecycle.py) or machine_owned (never
+                               clobbers a curated row of the same name). Two
+                               machine_owned producers currently call sync_db():
+                               project_inference.py's activity/calendar inference
+                               (generated_by "activity_inference_v1") and GH-124's
+                               commit-threshold auto-promotion (generated_by
+                               "commit_threshold_v1", wired into _refresh_github()
+                               in index_ops.py, immediately after the watchlist
+                               guard). _is_inference_owned() recognizes both markers.
 
 GitHub activity (writer: github_scan.py)
   github_activity            — per-repo event counts, keyed by (login, repo, scan_date)
@@ -336,11 +419,28 @@ SQLite @ $REBALANCE_DB
    - `_gather_vault_activity()` — recently modified files
    - `_gather_calendar_context()` — upcoming + recent events from `calendar_events`
    - `_gather_temporal_context()` — day-of-week / weekend / holiday framing for the prompt
-   - *(future: `_gather_sleuth_context()`, etc. — `sleuth_reminders` is mirrored but not yet gathered)*
+   - `_gather_hiqs_context()` — the persisted **HiQS** ranked verdict (see below). A cheap
+     cached read (`load_ranked_next_actions()`); it never recomputes. This is how Sleuth,
+     Gmail, and Figma reach `ask()`: they are already in the one ranked bundle, so `ask()`
+     surfaces them via the shared ranking rather than a per-source gatherer.
 
-2. **Assembles a prompt** with all context formatted into labeled sections.
+2. **Assembles a prompt** with all context formatted into labeled sections — including a
+   `## HiQS — ranked next actions` section carrying each action's receipts. The ranking is
+   also returned first-class on `QueryResult.hiqs`.
 
 3. **Synthesizes** via local Qwen3 LLM (mlx-lm). Returns both synthesis and raw context.
+
+### The Next Actions engine ("what to do next")
+
+A distinct read-side subsystem in [src/rebalance/ingest/next_actions.py](src/rebalance/ingest/next_actions.py) — structurally one of the larger clusters in the codebase. It is **HiQS**: the single, unified work-signal pipeline — **one bundle spanning all six sources (GitHub, vault, Calendar, Sleuth/Slack, Gmail, Figma), one ranked verdict, read by every surface**. `ask()` and the dashboard's what's-next view read the *same* persisted ranking, so they cannot drift. It also drives the fixed vault file `Dashboards/What To Do Next.md`.
+
+Pipeline (real symbols):
+
+1. **`assemble_day_bundle()`** gathers the operator's own day signal across all six sources into an `OperatorBundle`, plus teammate deltas (`_gather_teammate_delta()`). Candidates are built by **`_operator_candidates()`, which WALKS the collector registry** — each source owns its candidate shape via the `candidates=` provider on its `Collector` (the same registry seam as `semantic_docs=`). A new work signal reaches the ranked verdict by registering a collector, never by editing this dispatch (GUIDING-PRINCIPLES Principle 3).
+2. **`build_rank_prompt()`** formats the candidates; **`rank_next_actions()`** synthesizes the ranking. **Primary path = Gemini** (`get_gemini_api_key()` → `gemini-2.5-flash`); a deterministic local fallback (Qwen) keeps it working offline. `_parse_ranked_synthesis()` rejects placeholder echoes.
+3. Output is a **`RankedNextActions`** (list of `RankedAction`), **persisted** to a cache table via `persist_ranked_next_actions()` and read back by `load_ranked_next_actions()`.
+4. **`render_next_actions_markdown()`** writes the ranked list to the fixed vault file (single-writer, generated).
+5. **Consumers:** the `web.py` what's-next route (`whatsnext_page()`) is the single WRITER (its `?refresh` path ranks + persists); `ask()` is a READER that exposes the persisted ranking as the first-class `QueryResult.hiqs` field. Neither re-ranks inline, so the two surfaces are structurally incapable of drifting.
 
 ### Two-Layer LLM Architecture
 
@@ -383,9 +483,11 @@ Four ways the pipeline runs:
    - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist.template](scripts/com.rebalance-os.pulse-sync.plist.template)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
    - **30-minute pulse-web refresh** ([scripts/pulse_web_sync.sh](scripts/pulse_web_sync.sh) / [scripts/com.rebalance-os.pulse-web-sync.plist.template](scripts/com.rebalance-os.pulse-web-sync.plist.template)) every 30 minutes from 06:00 to 23:30. Calls [scripts/pulse_web.py](scripts/pulse_web.py) to regenerate the local `web/pulse.html` mirror of the dashboard. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the markdown→private-repo flow above.
    - **Hourly GitHub sync** ([scripts/github_sync.sh](scripts/github_sync.sh) / [scripts/com.rebalance-os.github-sync.plist.template](scripts/com.rebalance-os.github-sync.plist.template)) — a narrower github-only refresh independent of the daily full sync, for environments that want fresher GitHub data without paying the full multi-source cost.
-   - **Pulse server (long-running, not scheduled)** ([scripts/pulse_server.sh](scripts/pulse_server.sh) / [scripts/com.rebalance-os.pulse-server.plist.template](scripts/com.rebalance-os.pulse-server.plist.template)) — a FastAPI/uvicorn server on `127.0.0.1:8767` with `RunAtLoad` + `KeepAlive` (autostart at login, restart on crash, `ThrottleInterval=30s`). Adds an interactive layer (real Refresh button + filter) on top of the static `web/pulse.html` the pulse-web job regenerates. Loopback bind is enforced in [scripts/pulse_server.py](scripts/pulse_server.py). Unlike the five scheduled jobs above, it runs continuously rather than firing on a calendar interval.
+   - **Pulse server (long-running, not scheduled)** ([scripts/pulse_server.sh](scripts/pulse_server.sh) / [scripts/com.rebalance-os.pulse-server.plist.template](scripts/com.rebalance-os.pulse-server.plist.template)) — a FastAPI/uvicorn server on `127.0.0.1:8767` with `RunAtLoad` + `KeepAlive` (autostart at login, restart on crash, `ThrottleInterval=30s`). Adds an interactive layer (real Refresh button + filter) on top of the static `web/pulse.html` the pulse-web job regenerates, **and is the always-on JSON backend for the macOS Focus 5 Float app** ([macOS/Apps/Focus5Float](macOS/Apps/Focus5Float)) — it serves `/focus-5.json` (roster), `/focus-5/goals`, and `/focus-5/note` so the app works without a separate `rebalance serve` on `:8787`. Loopback bind is enforced in [scripts/pulse_server.py](scripts/pulse_server.py). Unlike the five scheduled jobs above, it runs continuously rather than firing on a calendar interval.
 
-   The remaining four jobs (health-check hourly, health-check-triage 3×/day, pulse-warning-watch every 15 min, obsidian-rollover at midnight) are operational/maintenance agents — see [SCHEDULER.md](SCHEDULER.md).
+     **Drift gotcha (has bitten the Focus 5 app twice):** [scripts/pulse_server.py](scripts/pulse_server.py) does *not* mount `rebalance.web`'s app — it hand-re-declares a chosen *subset* of its routes by importing the renderers. Two consequences: (1) a route added to `web.py` is invisible on `:8767` until a matching wrapper is added to `pulse_server.py` (this is how `/focus-5.json` was missed); (2) because it's a `KeepAlive` daemon, any route change requires `launchctl kickstart -k gui/$UID/com.rebalance-os.pulse-server` to take effect — a long-running process keeps serving its old route table otherwise (this is how a freshly-added `/focus-5/goals` still 404'd).
+
+   The remaining five jobs (health-check hourly, health-check-triage 3×/day, pulse-warning-watch every 15 min, obsidian-rollover at midnight, obsidian-daily-sync at 18:00) are operational/maintenance agents — see [SCHEDULER.md](SCHEDULER.md). The **obsidian-daily-sync** job ([utils/obsidian_daily_sync.sh](utils/obsidian_daily_sync.sh) / [scripts/com.rebalance-os.obsidian-daily-sync.plist.template](scripts/com.rebalance-os.obsidian-daily-sync.plist.template)) synthesizes a Gemini daily-activity summary from the structured `collect_pulse_snapshot()` output and lands it in an idempotent sentinel-bracketed block at the bottom of the vault's `0. Today's Notes.md`. Similarly, the **git-pulse-daily-synthesis** script ([utils/git_pulse_daily_synthesis.py](utils/git_pulse_daily_synthesis.py)) acts as a manual projection/export stage, aggregating multi-device git commit logs and synthesizing them into a separate block in the vault. Both scripts use Gemini-or-skip logic (no Qwen fallback) and feature late-run guards to prevent colliding with the 00:00 rollover.
 
    Wrapper scripts source [scripts/lib/scheduler_common.sh](scripts/lib/scheduler_common.sh) for env bootstrap (repo root, venv python, `PYTHONPATH`), per-day logs under `temp/logs/`, job-lifecycle events into `auth_activity.jsonl`, and log retention. Installers source [scripts/lib/install_common.sh](scripts/lib/install_common.sh) for one normalized flow: always-unload, render the `.plist.template` (`{{REBALANCE_DIR}}`, `{{PYTHON}}`, `{{HOME}}`), `plutil -lint`, load, poll-verify registration. The rendered plists in `~/Library/LaunchAgents/` are gitignored — the templates are the only checked-in form, so a clone on any machine installs cleanly with no per-user editing.
 

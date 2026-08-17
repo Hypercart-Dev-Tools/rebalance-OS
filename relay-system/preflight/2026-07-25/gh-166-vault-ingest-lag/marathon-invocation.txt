@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-166-vault-ingest-lag .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact src/rebalance/ingest/index_ops.py,src/rebalance/health.py \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "index_ops or vault_sync" -q' \
+  --require-clean

@@ -1,0 +1,74 @@
+# MARATHON-RESUME-P3.yaml — resume plan for the 2026-07-18 collector bundle
+#
+# WHY THIS FILE EXISTS
+# -------------------
+# marathon.sh has NO skip-if-already-approved logic. It runs every phase in the
+# plan, in depends_on order, on every invocation. Re-firing the full
+# MARATHON.yaml after a mid-run death would therefore re-run p1 and p2, which
+# have already landed correct, gate-passing work:
+#
+#   p1 coll-p1-139-dupe-emitter  APPROVED, gate passed  (health_issue_reporter.py, -40 net)
+#   p2 coll-p2-144-fanout        APPROVED, gate passed  (_http.py, +143)
+#
+# So this plan carries only the phases that have not been approved. It is a
+# resume artifact, not a second plan — MARATHON.yaml remains the record of the
+# whole bundle.
+#
+# STATE AT RESUME (2026-07-18, after a VS Code quit SIGTERM'd the driver)
+# ----------------------------------------------------------------------
+# p3 died mid-flight, not before starting:
+#   - codex's builder turn COMMITTED (+130 lines to src/rebalance/doctor.py)
+#   - agy's review turn was killed before it wrote a verdict
+#   - RELAY.md is still `STATUS: Open`
+#   - agy's abandoned claim on doctor.py + RELAY.md was reaped before this fire
+#
+# marathon-drive preserves an existing RELAY.md ("relay file unchanged"), so
+# codex's committed turn is intact and agy resumes by reviewing it rather than
+# rebuilding from scratch. Fire this with --retry coll-p3-138-job-liveness so
+# the spent token is not reused.
+#
+# GATE — same union selector as the parent plan, green at baseline
+# (178 passed, 10 skipped, 0 failed). Do NOT gate on the full suite: ~15
+# pre-existing failures are unrelated debt and would block every phase.
+#
+#   .venv/bin/python -m pytest tests/ \
+#     -k "doctor or health or freshness or scheduler_policy or github_scan or http" -q
+#
+# RUN
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/MARATHON-RESUME-P3.yaml \
+#     --retry coll-p3-138-job-liveness --force \
+#     --pre-advance-cmd '<the selector above>'
+
+# ⚠️ The plan `name` MUST match the original plan's name.
+#
+# The relay lane id is derived as `marathon-<plan-name>--<phase-id>`, so a
+# different name mints a FRESH lane and a fresh RELAY.md instead of resuming the
+# existing one. First attempt at this resume used
+# `marathon-2026-07-18-collectors-resume-p3`, which sent codex to rebuild p3 from
+# scratch on a doctor.py that already contained its own committed +130 lines —
+# a double-application hazard. Caught before codex committed; name reverted.
+#
+# Keeping the original name is what makes this a RESUME: the existing relay file
+# (codex's turn committed, agy's verdict missing) is preserved and agy picks up
+# where it was killed.
+name: marathon-2026-07-18-collectors
+
+phases:
+
+  - id: coll-p3-138-job-liveness
+    name: "GH-138: doctor warns when a SCHEDULER.md job is not loaded"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p3-138-job-liveness.md
+    artifact: src/rebalance/doctor.py,tests/test_scheduler_liveness.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+
+  - id: coll-p4-127-health-predicate
+    name: "GH-127: registry-driven content/volume health predicate"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p4-127-health-predicate.md
+    artifact: src/rebalance/doctor.py,tests/test_collector_health_predicate.py
+    depends_on: coll-p3-138-job-liveness
+    turn_timeout_s: 1200
+    max_review_rounds: 3

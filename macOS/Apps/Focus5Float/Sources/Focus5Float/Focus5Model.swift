@@ -11,7 +11,7 @@ import Observation
 /// Which panel the user has selected. Separate from `rankingMode` (server-side
 /// sort order) so switching to Telemetry and back preserves the last ranking.
 enum ViewMode: String {
-    case focus5, dirtyFive, telemetry
+    case focus5, dirtyFive, telemetry, promptLog
 }
 
 enum LoadState: Equatable {
@@ -26,6 +26,10 @@ enum LoadState: Equatable {
 final class Focus5Model {
     var roster: [RepoCard] = []
     var offRoster: [OffRosterWarning] = []
+    // GH-105: single newest dirty off-roster repo, or nil — already nil on a
+    // Dirty Five rerank (rankingMode == "dirty_first"), so no extra view guard
+    // is needed at the call site.
+    var dirtyBanner: OffRosterWarning?
     var rankingMode: String?          // "recent_activity" | "dirty_first"
     var lastUpdated: String?          // computed_at from the payload
     var loadState: LoadState = .idle
@@ -43,6 +47,50 @@ final class Focus5Model {
         }
     }
     var telemetryLoadError: String?
+    // Raw text of the selected file when it's a .md note rather than JSON telemetry
+    // rows — rendered via the same MarkdownLine path as the vault focus5.md note.
+    var telemetryMarkdownContent: String?
+    var telemetryIsMarkdown: Bool { Self.isMarkdownKind(telemetryFileURL) }
+
+    // Prompt Log tab (CLIO) — reads the CLIO-rendered Markdown export (the same
+    // file the operator's Obsidian vault shows) as source of truth, so the tab
+    // is a 1:1 mirror rather than a second rendering of the raw JSONL.
+    var promptLogEntries: [PromptLogEntry] = []
+    var promptLogFileURL: URL? {
+        didSet {
+            UserDefaults.standard.set(promptLogFileURL?.path, forKey: "promptLogFilePath")
+            refreshPromptLog()
+        }
+    }
+    var promptLogLoadError: String?
+    // FIFO pin queue, max 5, newest pin at index 0 (rendered top), oldest pin at
+    // the end (rendered bottom, and the one released when a 6th is pinned).
+    var pinnedPromptLogIDs: [String] = [] {
+        didSet {
+            UserDefaults.standard.set(pinnedPromptLogIDs, forKey: "pinnedPromptLogIDs")
+        }
+    }
+    static let maxPinnedPromptLogEntries = 5
+
+    var pinnedPromptLogEntries: [PromptLogEntry] {
+        let byID = Dictionary(uniqueKeysWithValues: promptLogEntries.map { ($0.id, $0) })
+        return pinnedPromptLogIDs.compactMap { byID[$0] }
+    }
+    var unpinnedPromptLogEntries: [PromptLogEntry] {
+        let pinned = Set(pinnedPromptLogIDs)
+        return promptLogEntries.filter { !pinned.contains($0.id) }
+    }
+
+    /// Pure extension-string discriminator: `.md` (any case) → markdown/text
+    /// viewer, everything else (incl. `.json`, no extension, or `nil`) →
+    /// structured signals viewer. `nonisolated` (despite living on this
+    /// `@MainActor` class) so GH-121 Phase 2's headless self-test can call the
+    /// real production logic — same single source of truth `telemetryIsMarkdown`
+    /// uses — with no MainActor context, no `Focus5Model` instance, and no file
+    /// dialog or disk I/O required.
+    nonisolated static func isMarkdownKind(_ url: URL?) -> Bool {
+        url?.pathExtension.lowercased() == "md"
+    }
 
     // Bottom note — the operator's vault `focus5.md`, projected by GET /focus-5/note.
     var noteContent = ""              // raw markdown (empty until first load / when absent)
@@ -52,6 +100,10 @@ final class Focus5Model {
     // Bottom Apple Reminders — read+write DIRECTLY via EventKit (not the server).
     // See RemindersStore for why the app is the runtime that can hold the grant.
     let reminders = RemindersStore()
+
+    // Bottom Obsidian Reminders — top open tasks from vault `0. Goals.md`,
+    // read+complete via the shared localhost Focus 5 routes.
+    let obsidianReminders = ObsidianRemindersStore()
 
     // Transient top banner ("Repos refreshed") — set after a successful *manual*
     // refresh so the recycle button gives visible feedback; the view fades it out
@@ -66,6 +118,10 @@ final class Focus5Model {
     init() {
         if let path = UserDefaults.standard.string(forKey: "telemetryFilePath") {
             telemetryFileURL = URL(fileURLWithPath: path)
+        }
+        pinnedPromptLogIDs = UserDefaults.standard.stringArray(forKey: "pinnedPromptLogIDs") ?? []
+        if let path = UserDefaults.standard.string(forKey: "promptLogFilePath") {
+            promptLogFileURL = URL(fileURLWithPath: path)
         }
     }
 
@@ -96,10 +152,13 @@ final class Focus5Model {
     func refresh() async {
         if viewMode == .telemetry {
             refreshTelemetry()
+        } else if viewMode == .promptLog {
+            refreshPromptLog()
         } else {
             _ = await fetchAndApply(dirty: isDirtyView)
             await refreshNote()
             await reminders.refresh()   // EventKit; no-ops until access granted
+            await obsidianReminders.refresh()
         }
     }
 
@@ -127,12 +186,15 @@ final class Focus5Model {
         noteLoaded = true
     }
 
-    /// Open an NSOpenPanel to pick a telemetry .json file, persist it, and refresh.
-    /// Called from both the in-panel button and the F5 menu bar action.
+    /// Open an NSOpenPanel to pick a .json telemetry file or a .md note, persist
+    /// it, and refresh. Called from both the in-panel button and the F5 menu bar
+    /// action. Selection persists across relaunches/reboots via UserDefaults
+    /// (see `telemetryFileURL.didSet` + `init()`).
     func openFilePicker() {
         let panel = NSOpenPanel()
-        panel.title = "Select Telemetry JSON File"
-        panel.allowedContentTypes = [UTType.json]
+        panel.title = "Select Telemetry or Markdown File"
+        let markdownType = UTType(filenameExtension: "md") ?? .plainText
+        panel.allowedContentTypes = [UTType.json, markdownType]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -140,14 +202,36 @@ final class Focus5Model {
         viewMode = .telemetry
     }
 
-    /// Re-read the selected telemetry file into telemetryEntries.
-    /// No-op (clears entries) when no file is selected.
+    /// Re-read the selected telemetry-tab file. A `.md` file is read as raw text
+    /// into `telemetryMarkdownContent` (rendered via the shared MarkdownLine path,
+    /// same as the vault focus5.md note); anything else decodes as telemetry JSON
+    /// into `telemetryEntries`. No-op (clears both) when no file is selected.
     func refreshTelemetry() {
         guard let url = telemetryFileURL else {
             telemetryEntries = []
+            telemetryMarkdownContent = nil
             telemetryLoadError = nil
             return
         }
+        if url.pathExtension.lowercased() == "md" {
+            telemetryEntries = []
+            // GH-121 agy [Should] #2: the read is synchronous on @MainActor, so cap
+            // it — a giant vault/telemetry .md would otherwise freeze the panel with
+            // no bound. Shared bounded read (see FileLoad); assumes .md < 1MB and
+            // truncates above that.
+            guard let (text, truncated) =
+                FileLoad.boundedText(url, byteCeiling: Self.telemetryMarkdownByteCeiling) else {
+                telemetryMarkdownContent = nil
+                telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
+                return
+            }
+            telemetryMarkdownContent = truncated
+                ? text + "\n\n…truncated (file exceeds 1 MB)"
+                : text
+            telemetryLoadError = nil
+            return
+        }
+        telemetryMarkdownContent = nil
         guard let data = try? Data(contentsOf: url) else {
             telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
             return
@@ -169,8 +253,83 @@ final class Focus5Model {
         telemetryEntries = Array(sorted.prefix(Self.telemetryRowCap))
     }
 
+    /// Open an NSOpenPanel to pick the CLIO-rendered prompt log .md file, persist
+    /// it, and refresh. Mirrors `openFilePicker()`'s telemetry-file selection.
+    func openPromptLogFilePicker() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Prompt Log Markdown File"
+        let markdownType = UTType(filenameExtension: "md") ?? .plainText
+        panel.allowedContentTypes = [markdownType]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        promptLogFileURL = url   // didSet persists + refreshes
+        viewMode = .promptLog
+    }
+
+    /// Re-read and re-parse the selected prompt log file. No-op (clears state)
+    /// when no file is selected.
+    func refreshPromptLog() {
+        guard let url = promptLogFileURL else {
+            promptLogEntries = []
+            promptLogLoadError = nil
+            return
+        }
+        guard let entries = PromptLogReader.load(from: url) else {
+            promptLogLoadError = "Could not read \"\(url.lastPathComponent)\"."
+            return
+        }
+        promptLogLoadError = nil
+        promptLogEntries = entries
+    }
+
+    /// Pin/unpin an entry. Pinning a 6th evicts the oldest pin (index `count-1`,
+    /// the one rendered at the bottom of the pinned section) — a FIFO queue, not
+    /// an arbitrary eviction.
+    func togglePin(_ entry: PromptLogEntry) {
+        if let idx = pinnedPromptLogIDs.firstIndex(of: entry.id) {
+            pinnedPromptLogIDs.remove(at: idx)
+        } else {
+            pinnedPromptLogIDs.insert(entry.id, at: 0)
+            if pinnedPromptLogIDs.count > Self.maxPinnedPromptLogEntries {
+                pinnedPromptLogIDs.removeLast()
+            }
+        }
+    }
+
+    func isPinned(_ entry: PromptLogEntry) -> Bool {
+        pinnedPromptLogIDs.contains(entry.id)
+    }
+
+    func resetAllPromptLogPins() {
+        pinnedPromptLogIDs = []
+    }
+
+    /// Resolves a Prompt Log entry's repo NAME (CLIO only ever logs the name,
+    /// never a path) back to a real local path + vscode:// URL, by matching
+    /// against the roster/off-roster repos the live Focus 5 payload already
+    /// knows about — the same "Open ↗" data `RepoCardView` uses, reused as-is
+    /// rather than a second path-resolution mechanism. Best-effort: a repo
+    /// that's fully clean, not in the top 5, and never off-roster-flagged
+    /// isn't resolvable from here — same ceiling the rest of the app has.
+    func vscodeOpenInfo(forRepoName repoName: String) -> (localPath: String, vscodeURL: String)? {
+        let key = repoName.lowercased()
+        if let card = roster.first(where: { $0.repoName.lowercased() == key }) {
+            return (card.localPath, card.vscodeUrl)
+        }
+        if let w = offRoster.first(where: { $0.repoName.lowercased() == key }) {
+            return (w.localPath, VSCodeLauncher.fileURL(forLocalPath: w.localPath))
+        }
+        return nil
+    }
+
     /// Max telemetry rows held in memory / rendered (newest-first after sort).
-    static let telemetryRowCap = 10_000
+    /// Aliases the shared feed cap so both file-backed viewers stay in lockstep.
+    static let telemetryRowCap = FileLoad.feedRowCap
+
+    /// Max bytes read from a telemetry-tab `.md` file before truncating (GH-121).
+    /// Aliases the shared Markdown ceiling (single source of truth in FileLoad).
+    static let telemetryMarkdownByteCeiling = FileLoad.markdownByteCeiling
 
     /// Switch board + re-fetch so the SERVER does the re-rank (?view=dirty), never
     /// the client. The mode is flipped optimistically and reverted if the fetch
@@ -243,10 +402,11 @@ final class Focus5Model {
     private func apply(_ resp: Focus5Response) {
         roster = resp.roster
         offRoster = resp.offRosterWarnings
+        dirtyBanner = resp.dirtyBanner
         rankingMode = resp.rankingMode
         lastUpdated = resp.computedAt
     }
 
     static let offlineMessage =
-        "Can't reach rebalance serve at localhost:8787.\nStart it with:  rebalance serve"
+        "Can't reach the local Focus 5 servers on localhost:8787 or 127.0.0.1:8767.\nStart rebalance serve, or verify the pulse server is running."
 }

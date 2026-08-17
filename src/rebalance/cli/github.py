@@ -177,37 +177,43 @@ def github_query_cmd(
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
 ) -> None:
     """Semantic search over the local GitHub issue/PR/comment corpus."""
-    from rebalance.ingest.github_knowledge import query_github_documents
+    from rebalance.ingest.semantic_index import query as semantic_query
 
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    results = query_github_documents(
+    results = semantic_query(
         database_path=db_path,
         query_text=text,
-        repo_full_name=repo,
+        repo=repo if repo else None,
         top_k=top_k,
         model_name=model,
+        source_filter=["github"],
     )
     if not results:
         typer.echo(
-            "No GitHub results found. Run `rebalance github-sync-artifacts` and "
-            "`rebalance github-embed` first."
+            "No GitHub results found. Run `rebalance refresh` first."
         )
         return
     for i, result in enumerate(results, 1):
-        labels = f" [{', '.join(result['labels'])}]" if result["labels"] else ""
-        milestone = f" milestone={result['milestone_title']}" if result["milestone_title"] else ""
-        state = f" state={result['state']}" if result["state"] else ""
+        metadata = result["metadata"]
+        labels = f" [{', '.join(metadata['labels'])}]" if metadata.get("labels") else ""
+        milestone = (
+            f" milestone={metadata['milestone_title']}" if metadata.get("milestone_title") else ""
+        )
+        state = f" state={metadata['state']}" if metadata.get("state") else ""
+        # source_type is "github" for every row here; the issue/pr/commit
+        # distinction lives in metadata.item_type, and doc_type is now doc_kind.
+        item_type = metadata.get("item_type", "")
         typer.echo(
-            f"{i}. [{result['similarity_score']:.3f}] {result['repo_full_name']} "
-            f"{result['source_type']} #{result['source_number']} {result['doc_type']}{labels}{state}{milestone}"
+            f"{i}. [{result['similarity_score']:.3f}] {metadata.get('repo_full_name', '')} "
+            f"{item_type} #{metadata.get('source_number', '')} {result['doc_kind']}{labels}{state}{milestone}"
         )
         typer.echo(f"   {result['title']}")
-        if result["html_url"]:
-            typer.echo(f"   {result['html_url']}")
+        if metadata.get("html_url"):
+            typer.echo(f"   {metadata['html_url']}")
         typer.echo(f"   {result['body_preview'][:180]}...")
         typer.echo()
 

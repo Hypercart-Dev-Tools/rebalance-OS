@@ -66,3 +66,47 @@ test-notes/
 mrt-temp/
 /.claude
 PROJECT/PDDA-ACTIVITY.jsonl
+.pdda-gh-state.tsv
+/graphify-out
+.xyz/
+
+# xyz/tick coordination runtime (machine-local, do not commit)
+xyz-tick/
+.tick/locks/
+/scratch
+/PROJECT/RELAY
+
+# Aider Studio (auto-added)
+REPO_MAP.md
+.aider/
+/extensions
+
+# Per-developer VS Code editor prefs (theme colors, chat auto-approve).
+# Shared VS Code config (launch.json / tasks.json) stays tracked.
+.vscode/settings.json
+
+# Test-run artifacts. Untracked-but-not-ignored files at the repo root are treated as
+# an off-lane edit by the XYZ relay containment guard, so a builder that merely RUNS
+# the test suite in its isolated worktree fails its turn (exit 6) for doing exactly
+# what its brief required. Cost two marathon phases on 2026-07-28 before diagnosis.
+.pytest_cache/
+.coverage
+.coverage.*
+
+# Scratch/test databases — never commit these. Also: an untracked test.db in the
+# working tree trips marathon containment, which reads git porcelain and cannot
+# tell a builder's scratch file from an off-lane escape (GH-250, vb5).
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# AI agent scratch workspaces — never repo content (GH-266)
+.gemini/
+
+# Operator-supplied Google OAuth client (never commit the real one; the
+# *.example.json template is committed deliberately and stays tracked).
+google_oauth_client.json
+client_secret*.json

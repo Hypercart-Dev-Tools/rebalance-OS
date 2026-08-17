@@ -1,0 +1,65 @@
+# 3-Eyes known-issues suppression list (GH-195 P7b).
+#
+# The gate that makes the `gh-issue` route safe to enable in P8. #139 was closed by
+# DELETING a duplicate-issue emitter, so a supervisor that files an issue for every
+# recurring, already-understood failure would recreate the exact defect this project
+# is meant to prevent.
+#
+# Two-stage triage, cheapest first:
+#   1. A failure matching a rule here is suppressed DETERMINISTICALLY — no model call,
+#      no issue, one log-only record. Free, auditable, and it cannot hallucinate.
+#   2. Only a failure matching NOTHING here reaches Gemma, which decides whether it is
+#      a new problem worth surfacing.
+# That ordering matters: the recurring failures are exactly the high-volume ones, so
+# suppressing them for free is what keeps the daily LLM budget available for novelty.
+#
+# Fields per rule:
+#   id          stable identifier, quoted in the suppression record          (required)
+#   pattern     case-insensitive regex matched against the job's log tail    (required)
+#   jobs        job ids / launchd labels this applies to; omit = any job     (optional)
+#   reason      why this is non-actionable, in one line                      (required)
+#   issue       the tracking issue, so "suppressed" never means "forgotten"  (optional)
+#   expires     ISO date after which the rule stops matching and is reported (optional)
+#
+# A rule WITHOUT `issue` or `expires` is permanent silence, which is how a real
+# regression hides. Prefer one or the other.
+
+[[rule]]
+id = "sleuth-staleness"
+pattern = "sleuth.{0,40}(stale|no new|not advanced)"
+reason = "Upstream publisher stops posting; nothing this machine can fix. Human-only."
+issue = "152"
+
+[[rule]]
+id = "python-bootstrap-errno-4"
+# Scoped (agy review, P7 QA finding 5). Unscoped, "interrupted system call" is a
+# generic EINTR string that can appear in a database write or any syscall-heavy
+# collector — suppressing it fleet-wide would silence failures that have nothing to
+# do with interpreter bootstrap. The pattern is also anchored on the bootstrap
+# context rather than matching EINTR anywhere.
+jobs = ["daily-sync", "github-sync", "vault-sync", "collector-health"]
+pattern = "(bootstrap|site-packages|import).{0,80}(errno 4\\b|interrupted system call)"
+reason = "EINTR during interpreter bootstrap under memory pressure; self-recovering on the next run."
+issue = "186"
+
+[[rule]]
+id = "github-403-rate-limit"
+# Scoped + anchored on api.github.com (agy review, P7 QA finding 5): a bare
+# "403 rate limit" from some unrelated API is not this known issue.
+jobs = ["daily-sync", "github-sync", "collector-health"]
+pattern = "(github|api\\.github\\.com).{0,120}403|403.{0,60}(rate limit|abuse|secondary)"
+reason = "github_sync (hourly) overlapping daily_sync exhausts the rate limit; a scheduling concern, not a code fault."
+issue = "144"
+
+# NOTE — deliberately NOT suppressed: SQLite "database is locked".
+#
+# It was on the original GH-146 known-issues list as "expected when daily_sync and
+# github_sync overlap". Investigating it on 2026-07-28 showed that is wrong: the DB is
+# WAL with a 30s busy timeout, so an abort proves a writer held the lock for over 30
+# CONTINUOUS seconds — a real defect in the ingest path, now #222 (and its sibling
+# #171). Suppressing it would have kept a genuine bug invisible for as long as the
+# rule stood.
+#
+# Left here as a comment on purpose: this file's danger is that a rule is a decision to
+# stop looking, and "everyone knows about that one" is exactly how a defect earns
+# permanent silence. Re-derive before adding a rule; do not inherit one.

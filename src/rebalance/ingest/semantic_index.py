@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from rebalance.ingest.db import (
     ensure_semantic_schema,
     run_migrations,
 )
+from rebalance.ingest._job_guard import guarded_embedding
 from rebalance.ingest.db import semantic as sem
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
@@ -26,6 +28,8 @@ from rebalance.ingest.embedder import (
     _load_model,
     _vec_to_bytes,
 )
+
+logger = logging.getLogger(__name__)
 
 EmbedTexts = Callable[[list[str], str], list[list[float]]]
 
@@ -79,9 +83,7 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
+from rebalance.lib.json_ops import _json_dumps
 
 # ---------------------------------------------------------------------------
 # Shared retrieval contracts — exported so callers never re-derive them.
@@ -295,33 +297,52 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
         conn, normalized_repo=normalized_repo, ignored_repos=ignored_repos
     )
 
-    inserted = updated = unchanged = 0
+    inserted = updated = unchanged = skipped = 0
     seen_source_pks: set[str] = set()
     for row in rows:
         source_pk = row["source_key"]
+        try:
+            _, state = upsert_document(
+                conn,
+                source_type="github",
+                source_table="github_documents",
+                source_pk=source_pk,
+                doc_kind=row["doc_type"],
+                title=row["title"] or "",
+                body=row["body"],
+                metadata={
+                    "repo_full_name": row["repo_full_name"],
+                    "item_type": row["github_source_type"],
+                    "source_number": row["source_number"],
+                    "state": row["state"] or "",
+                    "milestone_title": row["milestone_title"] or "",
+                    "labels": json.loads(row["labels_json"]) if row["labels_json"] else [],
+                    "review_decision": row["review_decision"] or "",
+                    "check_status": row["check_status"] or "",
+                    "html_url": row["html_url"] or "",
+                },
+                created_at=row["fetched_at"],
+                updated_at=row["updated_at"] or row["fetched_at"],
+            )
+        except Exception as exc:
+            # GH-167: one malformed github_documents row (bad JSON in
+            # labels_json, a constraint violation, etc.) must not abort the
+            # rest of this repo's projection — skip it, log why, and keep
+            # going so every other row still lands in the semantic index.
+            skipped += 1
+            logger.warning(
+                "sync_github_documents: skipping malformed row source_key=%r "
+                "repo=%r doc_type=%r: %s",
+                source_pk,
+                row["repo_full_name"],
+                row["doc_type"],
+                exc,
+            )
+            continue
+        # Only mark a row "seen" once it's actually landed in the semantic
+        # index — a skipped row must stay eligible for reconciliation on the
+        # next run instead of being treated as intentionally deleted.
         seen_source_pks.add(source_pk)
-        _, state = upsert_document(
-            conn,
-            source_type="github",
-            source_table="github_documents",
-            source_pk=source_pk,
-            doc_kind=row["doc_type"],
-            title=row["title"] or "",
-            body=row["body"],
-            metadata={
-                "repo_full_name": row["repo_full_name"],
-                "item_type": row["github_source_type"],
-                "source_number": row["source_number"],
-                "state": row["state"] or "",
-                "milestone_title": row["milestone_title"] or "",
-                "labels": json.loads(row["labels_json"]) if row["labels_json"] else [],
-                "review_decision": row["review_decision"] or "",
-                "check_status": row["check_status"] or "",
-                "html_url": row["html_url"] or "",
-            },
-            created_at=row["fetched_at"],
-            updated_at=row["updated_at"] or row["fetched_at"],
-        )
         if state == "inserted":
             inserted += 1
         elif state == "updated":
@@ -342,6 +363,7 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
         "updated": updated,
         "unchanged": unchanged,
         "deleted": deleted,
+        "skipped": skipped,
     }
 
 
@@ -609,6 +631,7 @@ def embed_semantic_pending(
     )
 
 
+@guarded_embedding
 def embed_pending(
     database_path: Path,
     *,
@@ -619,7 +642,15 @@ def embed_pending(
     source_types: Iterable[str] | None = None,
     embed_texts: EmbedTexts | None = None,
 ) -> SemanticEmbedResult:
-    """Embed pending semantic document rows via the shared local embedder."""
+    """Embed pending semantic document rows via the shared local embedder.
+
+    Guarded by a single-instance lock and memory ceiling (GH-172), sharing one
+    lock with :func:`rebalance.ingest.embedder.embed_chunks` — both load the same
+    Qwen model, so their memory cost is cumulative and they must serialise
+    against each other, not merely against themselves.
+    """
+    from rebalance.ingest.embedder import instrument_embedding_pass
+    instrument_embedding_pass("embed_pending")
     start = time.monotonic()
     embed_fn = embed_texts or _default_embed_texts
     selected_sources = _normalize_sources(source_types)
